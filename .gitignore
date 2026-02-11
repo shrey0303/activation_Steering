@@ -1,0 +1,66 @@
+# ─── Python ───────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ─── Virtual Environments ─────────────────────────
+.venv/
+venv/
+env/
+
+# ─── IDE ──────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── OS ───────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Environment ──────────────────────────────────
+.env
+.env.local
+.env.production
+
+# ─── Node ─────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+
+# ─── Database ─────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ─── Model Cache ──────────────────────────────────
+models/
+*.bin
+*.safetensors
+*.gguf
+
+# ─── Logs ─────────────────────────────────────────
+*.log
+logs/
+
+# ─── Temporary ────────────────────────────────────
+tmp/
+/tmp/
+*.tmp
+
+# ─── Test artifacts ───────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ─── Docker ───────────────────────────────────────
+docker-compose.override.yml
+
+# ─── Build artifacts ──────────────────────────────
+frontend/dist/
+
