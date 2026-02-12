@@ -423,3 +423,84 @@ class LayerScanner:
             "ffn_norm_max": float(np.max(ffn_norms)),
         }
 
+    def _general_weight_stats(
+        self, weights: Dict[str, torch.Tensor]
+    ) -> Dict[str, float]:
+        """Overall weight statistics: sparsity, kurtosis, skewness."""
+        all_vals: List[float] = []
+        total_params = 0
+        near_zero = 0
+
+        for w in weights.values():
+            try:
+                flat = w.float().flatten().numpy()
+                all_vals.append(float(np.std(flat)))
+                total_params += len(flat)
+                near_zero += int(np.sum(np.abs(flat) < 1e-4))
+            except Exception:
+                continue
+
+        sparsity = near_zero / max(total_params, 1)
+
+        return {
+            "weight_std_mean": float(np.mean(all_vals)) if all_vals else 0.0,
+            "sparsity": sparsity,
+            "total_params": float(total_params),
+        }
+
+    def _position_heuristic(
+        self, layer_idx: int, total_layers: int
+    ) -> Dict[str, float]:
+        """
+        Fallback when weight extraction fails â€” use relative position.
+        """
+        pos = layer_idx / max(total_layers - 1, 1)
+        return {
+            "svd_rank": 0.0,
+            "svd_entropy": 0.0,
+            "svd_decay": 0.0,
+            "attn_entropy": 0.0,
+            "ffn_norm_mean": 0.0,
+            "ffn_norm_max": 0.0,
+            "weight_std_mean": 0.0,
+            "sparsity": 0.0,
+            "total_params": 0.0,
+        }
+
+    # â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+    # â•‘       STEP 2: INTER-LAYER SIMILARITY (CKA-like)        â•‘
+    # â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+    def _compute_layer_similarities(
+        self, features: List[Dict[str, float]]
+    ) -> List[float]:
+        """
+        Compute pairwise similarity between adjacent layers.
+
+        Large drops indicate functional boundaries between layer groups.
+        """
+        if len(features) < 2:
+            return [0.0]
+
+        feature_keys = [
+            "svd_rank", "svd_entropy", "attn_entropy",
+            "ffn_norm_mean", "weight_std_mean", "sparsity",
+        ]
+
+        def to_vec(f: Dict[str, float]) -> np.ndarray:
+            return np.array([f.get(k, 0.0) for k in feature_keys])
+
+        similarities: List[float] = [0.0]  # first layer has no predecessor
+        for i in range(1, len(features)):
+            v1, v2 = to_vec(features[i - 1]), to_vec(features[i])
+            norm1 = np.linalg.norm(v1) + 1e-10
+            norm2 = np.linalg.norm(v2) + 1e-10
+            cosine_sim = float(np.dot(v1, v2) / (norm1 * norm2))
+            similarities.append(cosine_sim)
+
+        return similarities
+
+    # â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+    # â•‘          STEP 3: LAYER CATEGORISATION                   â•‘
+    # â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
