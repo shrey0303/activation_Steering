@@ -1,14 +1,14 @@
 """
-ðŸŒŸ Mathematical Layer Scanner â€” Core Innovation.
+🌟 Mathematical Layer Scanner — Core Innovation.
 
 Analyses a transformer model's weight matrices to build a functional
 layer map **without running any prompts**.  Uses:
 
-1. SVD singular-value distribution  â†’  learned complexity / rank
-2. Attention weight entropy        â†’  local vs. global patterns
-3. FFN weight norms                â†’  transformation strength
-4. Inter-layer similarity (CKA)   â†’  functional boundary detection
-5. Rule-based categorisation       â†’  maps features â†’ functional groups
+1. SVD singular-value distribution  →  learned complexity / rank
+2. Attention weight entropy        →  local vs. global patterns
+3. FFN weight norms                →  transformation strength
+4. Inter-layer similarity (CKA)   →  functional boundary detection
+5. Rule-based categorisation       →  maps features → functional groups
 
 The resulting layer profile is cached in SQLite so repeated scans are
 instant.
@@ -29,35 +29,35 @@ from sklearn.cluster import KMeans
 from app.core.loader import ModelManager
 
 
-# â”€â”€ Layer functional categories (research-backed) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Layer functional categories (research-backed) ─────────────
 #
 # Each category is grounded in published mechanistic interpretability
-# research.  Position ranges are approximate â€” actual assignment uses
+# research.  Position ranges are approximate — actual assignment uses
 # K-Means clustering on weight features with position as a tiebreaker.
 #
 CATEGORIES = [
-    "token_embedding",           # 0â€“5%   Raw vocabulary lookup
-    "positional_morphological",  # 5â€“12%  Position encoding, morphology
-    "syntactic_processing",      # 12â€“25% Phrase structure, dependencies
-    "entity_semantic",           # 25â€“40% NER, polysemy, coreference
-    "knowledge_retrieval",       # 40â€“55% Factual recall via FF key-value
-    "reasoning_planning",        # 55â€“70% Multi-step inference, planning
-    "safety_alignment",          # 70â€“78% Refusal circuits, guardrails
-    "information_integration",   # 78â€“88% Cross-layer signal merging
-    "style_personality",         # 88â€“95% Tone, register, personality
-    "output_distribution",       # 95â€“100% Final token probabilities
+    "token_embedding",           # 0–5%   Raw vocabulary lookup
+    "positional_morphological",  # 5–12%  Position encoding, morphology
+    "syntactic_processing",      # 12–25% Phrase structure, dependencies
+    "entity_semantic",           # 25–40% NER, polysemy, coreference
+    "knowledge_retrieval",       # 40–55% Factual recall via FF key-value
+    "reasoning_planning",        # 55–70% Multi-step inference, planning
+    "safety_alignment",          # 70–78% Refusal circuits, guardrails
+    "information_integration",   # 78–88% Cross-layer signal merging
+    "style_personality",         # 88–95% Tone, register, personality
+    "output_distribution",       # 95–100% Final token probabilities
 ]
 
-# Citations for each category â€” used in layer descriptions and README
+# Citations for each category — used in layer descriptions and README
 CATEGORY_CITATIONS = {
-    "token_embedding": "Universal â€” raw subword/token identity encoding",
-    "positional_morphological": "Logit Lens (nostalgebraist 2020) â€” early layers show positional/shallow predictions",
-    "syntactic_processing": "Probing classifiers (Hewitt & Manning 2019) â€” structural probe for syntax",
-    "entity_semantic": "Attention head analysis â€” entity tracking and polysemy resolution",
-    "knowledge_retrieval": "Geva et al. 2021 â€” FF layers as key-value memories for factual recall",
+    "token_embedding": "Universal — raw subword/token identity encoding",
+    "positional_morphological": "Logit Lens (nostalgebraist 2020) — early layers show positional/shallow predictions",
+    "syntactic_processing": "Probing classifiers (Hewitt & Manning 2019) — structural probe for syntax",
+    "entity_semantic": "Attention head analysis — entity tracking and polysemy resolution",
+    "knowledge_retrieval": "Geva et al. 2021 — FF layers as key-value memories for factual recall",
     "reasoning_planning": "Mid-layer attention for multi-step inference and look-ahead planning",
-    "safety_alignment": "Anthropic activation patching â€” refusal circuit identification",
-    "information_integration": "Lawson et al. 2025 â€” middle-layer redundancy and signal merging",
+    "safety_alignment": "Anthropic activation patching — refusal circuit identification",
+    "information_integration": "Lawson et al. 2025 — middle-layer redundancy and signal merging",
     "style_personality": "Late-layer tone and register control in generation",
     "output_distribution": "Anti-overconfidence mechanism in final layer (logit lens studies)",
 }
@@ -86,7 +86,7 @@ BEHAVIORAL_ROLES = {
     "knowledge_retrieval": (
         "Retrieves factual knowledge from learned parameters: encyclopedic facts, "
         "world knowledge, and associative memory. "
-        "Ref: Geva et al. 2021 â€” FF layers function as key-value memories."
+        "Ref: Geva et al. 2021 — FF layers function as key-value memories."
     ),
     "reasoning_planning": (
         "Performs multi-step logical inference, causal reasoning, and response "
@@ -101,7 +101,7 @@ BEHAVIORAL_ROLES = {
     "information_integration": (
         "Merges signals from earlier layers: resolves conflicting information, "
         "weighs competing hypotheses, and consolidates multi-source evidence. "
-        "Ref: Lawson et al. 2025 â€” these layers show high redundancy."
+        "Ref: Lawson et al. 2025 — these layers show high redundancy."
     ),
     "style_personality": (
         "Controls output style and personality: tone, formality register, "
@@ -119,15 +119,15 @@ BEHAVIORAL_ROLES = {
 class LayerScanner:
     """
     Mathematically profile every transformer layer by analysing weight
-    matrices only â€” no forward pass required.
+    matrices only — no forward pass required.
     """
 
     def __init__(self, model_manager: ModelManager) -> None:
         self.mm = model_manager
 
-    # â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-    # â•‘                   PUBLIC INTERFACE                       â•‘
-    # â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ╔══════════════════════════════════════════════════════════╗
+    # ║                   PUBLIC INTERFACE                       ║
+    # ╚══════════════════════════════════════════════════════════╝
 
     def scan(self) -> List[Dict[str, Any]]:
         """
@@ -141,7 +141,7 @@ class LayerScanner:
               weight_stats, description
         """
         if not self.mm.loaded:
-            raise RuntimeError("No model loaded â€“ call ModelManager.load() first")
+            raise RuntimeError("No model loaded – call ModelManager.load() first")
 
         t0 = time.perf_counter()
         layers = self.mm.get_layer_modules()
@@ -152,9 +152,9 @@ class LayerScanner:
                 "Could not detect transformer layers in this model architecture"
             )
 
-        logger.info(f"ðŸ”¬ Scanning {n_layers} layers of {self.mm.model_name}...")
+        logger.info(f"🔬 Scanning {n_layers} layers of {self.mm.model_name}...")
 
-        # â”€â”€ Step 1: Extract per-layer features â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 1: Extract per-layer features ────────────────
         features: List[Dict[str, float]] = []
         for idx, layer_module in enumerate(layers):
             feat = self._extract_layer_features(idx, layer_module, n_layers)
@@ -162,14 +162,14 @@ class LayerScanner:
             if (idx + 1) % 8 == 0 or idx == n_layers - 1:
                 logger.debug(f"   Scanned layer {idx + 1}/{n_layers}")
 
-        # â”€â”€ Step 2: Compute inter-layer similarity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 2: Compute inter-layer similarity ────────────
         similarities = self._compute_layer_similarities(features)
 
-        # â”€â”€ Step 3: Categorise layers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 3: Categorise layers ─────────────────────────
         profiles = self._categorise_layers(features, similarities, n_layers)
 
         elapsed = time.perf_counter() - t0
-        logger.info(f"âœ… Scan complete in {elapsed:.1f}s")
+        logger.info(f"✅ Scan complete in {elapsed:.1f}s")
         return profiles
 
     def get_scan_hash(self) -> str:
@@ -183,9 +183,9 @@ class LayerScanner:
         )
         return hashlib.sha256(info.encode()).hexdigest()[:16]
 
-    # â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-    # â•‘            STEP 1: FEATURE EXTRACTION                   â•‘
-    # â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ╔══════════════════════════════════════════════════════════╗
+    # ║            STEP 1: FEATURE EXTRACTION                   ║
+    # ╚══════════════════════════════════════════════════════════╝
 
     @staticmethod
     def _dequantize_param(param: torch.nn.Parameter) -> Optional[torch.Tensor]:
@@ -200,7 +200,7 @@ class LayerScanner:
         Returns None if the parameter cannot be dequantised.
         """
         try:
-            # â”€â”€ bitsandbytes 4-bit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── bitsandbytes 4-bit ────────────────────────────
             module_type = type(param).__module__ or ""
             cls_name = type(param).__qualname__ or ""
 
@@ -226,7 +226,7 @@ class LayerScanner:
                 except Exception:
                     pass
 
-            # â”€â”€ bitsandbytes 8-bit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── bitsandbytes 8-bit ────────────────────────────
             if hasattr(param, "SCB") or hasattr(param, "CB"):
                 try:
                     import bitsandbytes as bnb
@@ -234,7 +234,7 @@ class LayerScanner:
                 except Exception:
                     pass
 
-            # â”€â”€ Standard param: cast to float32 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Standard param: cast to float32 ──────────────
             return param.detach().float().cpu()
 
         except Exception:
@@ -271,19 +271,19 @@ class LayerScanner:
             features.update(self._position_heuristic(layer_idx, total_layers))
             return features
 
-        # â”€â”€ SVD analysis (top-k singular values) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── SVD analysis (top-k singular values) ──────────────
         svd_features = self._svd_analysis(weight_tensors)
         features.update(svd_features)
 
-        # â”€â”€ Attention weight entropy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Attention weight entropy ──────────────────────────
         attn_features = self._attention_entropy(weight_tensors)
         features.update(attn_features)
 
-        # â”€â”€ FFN norm analysis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── FFN norm analysis ─────────────────────────────────
         ffn_features = self._ffn_norm_analysis(weight_tensors)
         features.update(ffn_features)
 
-        # â”€â”€ General weight statistics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── General weight statistics ─────────────────────────
         general = self._general_weight_stats(weight_tensors)
         features.update(general)
 
@@ -296,12 +296,12 @@ class LayerScanner:
         Singular value decomposition of weight matrices.
 
         The distribution of singular values reveals:
-        - High effective rank  â†’  complex learned transformations
-        - Rapid decay         â†’  low-rank, simpler representation
-        - Entropy of spectrum â†’  diversity of learned features
+        - High effective rank  →  complex learned transformations
+        - Rapid decay         →  low-rank, simpler representation
+        - Entropy of spectrum →  diversity of learned features
 
         Uses randomized SVD (scipy) with aggressive downsampling
-        for speed â€” 256 rows Ã— 512 cols Ã— k=32 per matrix.
+        for speed — 256 rows × 512 cols × k=32 per matrix.
         """
         from scipy.sparse.linalg import svds
         all_singular: List[np.ndarray] = []
@@ -313,7 +313,7 @@ class LayerScanner:
                     continue
 
                 # Aggressive downsampling for speed:
-                # cap at 256 rows Ã— 512 cols (was 1024 Ã— unlimited)
+                # cap at 256 rows × 512 cols (was 1024 × unlimited)
                 w_2d = w.reshape(-1, w.shape[-1])[:256, :512].numpy()
                 k = min(32, min(w_2d.shape) - 1)  # scipy svds needs k < min(m,n)
                 if k < 1:
@@ -354,8 +354,8 @@ class LayerScanner:
         """
         Analyse attention projection weights.
 
-        Higher entropy in Q/K projections â†’ global attention (semantic).
-        Lower entropy â†’ local attention (syntactic).
+        Higher entropy in Q/K projections → global attention (semantic).
+        Lower entropy → local attention (syntactic).
         """
         attn_entropy_values: List[float] = []
 
@@ -392,8 +392,8 @@ class LayerScanner:
         """
         Analyse feed-forward network weight magnitudes.
 
-        Large norms â†’ strong non-linear transformation (reasoning).
-        Small norms â†’ light processing (embedding / output).
+        Large norms → strong non-linear transformation (reasoning).
+        Small norms → light processing (embedding / output).
         """
         ffn_norms: List[float] = []
 
@@ -452,7 +452,7 @@ class LayerScanner:
         self, layer_idx: int, total_layers: int
     ) -> Dict[str, float]:
         """
-        Fallback when weight extraction fails â€” use relative position.
+        Fallback when weight extraction fails — use relative position.
         """
         pos = layer_idx / max(total_layers - 1, 1)
         return {
@@ -467,9 +467,9 @@ class LayerScanner:
             "total_params": 0.0,
         }
 
-    # â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-    # â•‘       STEP 2: INTER-LAYER SIMILARITY (CKA-like)        â•‘
-    # â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ╔══════════════════════════════════════════════════════════╗
+    # ║       STEP 2: INTER-LAYER SIMILARITY (CKA-like)        ║
+    # ╚══════════════════════════════════════════════════════════╝
 
     def _compute_layer_similarities(
         self, features: List[Dict[str, float]]
@@ -500,9 +500,9 @@ class LayerScanner:
 
         return similarities
 
-    # â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-    # â•‘          STEP 3: LAYER CATEGORISATION                   â•‘
-    # â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ╔══════════════════════════════════════════════════════════╗
+    # ║          STEP 3: LAYER CATEGORISATION                   ║
+    # ╚══════════════════════════════════════════════════════════╝
 
     def _categorise_layers(
         self,
@@ -561,7 +561,7 @@ class LayerScanner:
             for cl, positions in cluster_positions.items()
         }
 
-        # Sort clusters by average position â†’ assign categories in order
+        # Sort clusters by average position → assign categories in order
         sorted_clusters = sorted(
             cluster_avg_pos.keys(), key=lambda c: cluster_avg_pos[c]
         )
@@ -571,7 +571,7 @@ class LayerScanner:
             cat_idx = min(cat_idx, len(CATEGORIES) - 1)
             cluster_to_category[cl] = CATEGORIES[cat_idx]
 
-        # â”€â”€ Build final profiles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Build final profiles ──────────────────────────────
         for idx in range(n_layers):
             # Category from clustering (primary)
             cluster = int(cluster_labels[idx])
@@ -607,10 +607,10 @@ class LayerScanner:
             pos_certainty = 1.0 - 0.3 * abs(pos - 0.5)  # range ~0.85 to 1.0
 
             if category == position_category:
-                # Cluster & position agree â†’ high confidence
+                # Cluster & position agree → high confidence
                 confidence = 0.80 + 0.10 * pos_certainty + feature_quality * 0.15
             else:
-                # Disagree â†’ moderate confidence, boosted by feature quality
+                # Disagree → moderate confidence, boosted by feature quality
                 confidence = 0.60 + feature_quality * 0.30 + 0.05 * pos_certainty
 
             # Bonus for layers with strong extracted params (not position-only fallback)
@@ -642,6 +642,117 @@ class LayerScanner:
 
         return profiles
 
-    # â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Helpers ───────────────────────────────────────────────
 
     @staticmethod
+    def _position_to_category(relative_pos: float) -> str:
+        """Map a relative position [0,1] to a research-backed category."""
+        if relative_pos < 0.05:
+            return "token_embedding"
+        elif relative_pos < 0.12:
+            return "positional_morphological"
+        elif relative_pos < 0.25:
+            return "syntactic_processing"
+        elif relative_pos < 0.40:
+            return "entity_semantic"
+        elif relative_pos < 0.55:
+            return "knowledge_retrieval"
+        elif relative_pos < 0.70:
+            return "reasoning_planning"
+        elif relative_pos < 0.78:
+            return "safety_alignment"
+        elif relative_pos < 0.88:
+            return "information_integration"
+        elif relative_pos < 0.95:
+            return "style_personality"
+        else:
+            return "output_distribution"
+
+    @staticmethod
+    def _position_based_clusters(n_layers: int) -> np.ndarray:
+        """Fallback clustering based purely on position (10 zones)."""
+        boundaries = [0.05, 0.12, 0.25, 0.40, 0.55, 0.70, 0.78, 0.88, 0.95]
+        labels = np.zeros(n_layers, dtype=int)
+        for i in range(n_layers):
+            pos = i / max(n_layers - 1, 1)
+            label = len(boundaries)  # default = last category
+            for b_idx, b in enumerate(boundaries):
+                if pos < b:
+                    label = b_idx
+                    break
+            labels[i] = label
+        return labels
+
+    @staticmethod
+    def _generate_layer_description(
+        layer_idx: int,
+        category: str,
+        stats: Dict[str, float],
+        relative_pos: float,
+    ) -> str:
+        """
+        Generate a dynamic, stats-driven description for a layer.
+        Goes beyond the generic BEHAVIORAL_ROLES text by interpreting
+        the actual weight statistics of this specific layer.
+        """
+        parts = [f"Layer {layer_idx} ({category.replace('_', ' ').title()})"]
+
+        # SVD rank interpretation
+        svd_rank = stats.get("svd_rank", 0.0)
+        if svd_rank > 0.7:
+            parts.append(
+                f"High expressive rank ({svd_rank:.2f}) — this layer "
+                "uses diverse feature combinations"
+            )
+        elif svd_rank > 0.3:
+            parts.append(
+                f"Moderate rank ({svd_rank:.2f}) — balanced feature usage"
+            )
+        elif svd_rank > 0:
+            parts.append(
+                f"Low rank ({svd_rank:.2f}) — highly specialized, "
+                "compresses information into fewer dimensions"
+            )
+
+        # Attention entropy
+        attn_ent = stats.get("attn_entropy", 0.0)
+        if attn_ent > 0.7:
+            parts.append(
+                f"Broad attention (entropy={attn_ent:.2f}) — attends "
+                "to many positions, suggests global context aggregation"
+            )
+        elif attn_ent > 0.3:
+            parts.append(
+                f"Focused attention (entropy={attn_ent:.2f}) — "
+                "selectively attends to relevant positions"
+            )
+        elif attn_ent > 0:
+            parts.append(
+                f"Sharp attention (entropy={attn_ent:.2f}) — highly "
+                "local patterns, likely syntactic or positional"
+            )
+
+        # FFN norm
+        ffn_norm = stats.get("ffn_norm_mean", 0.0)
+        if ffn_norm > 20:
+            parts.append(
+                f"Strong FF transformation (norm={ffn_norm:.1f}) — "
+                "significant feature manipulation"
+            )
+        elif ffn_norm > 5:
+            parts.append(
+                f"Moderate FF activity (norm={ffn_norm:.1f})"
+            )
+
+        # Sparsity
+        sparsity = stats.get("sparsity", 0.0)
+        if sparsity > 0.3:
+            parts.append(
+                f"High sparsity ({sparsity:.0%}) — selective activation, "
+                "specialized function"
+            )
+        elif sparsity > 0.1:
+            parts.append(f"Moderate sparsity ({sparsity:.0%})")
+
+        return ". ".join(parts) + "."
+
