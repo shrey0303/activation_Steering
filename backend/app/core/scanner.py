@@ -348,3 +348,42 @@ class LayerScanner:
             "svd_decay": decay,
         }
 
+    def _attention_entropy(
+        self, weights: Dict[str, torch.Tensor]
+    ) -> Dict[str, float]:
+        """
+        Analyse attention projection weights.
+
+        Higher entropy in Q/K projections â†’ global attention (semantic).
+        Lower entropy â†’ local attention (syntactic).
+        """
+        attn_entropy_values: List[float] = []
+
+        for name, w in weights.items():
+            # Heuristic: attention projections usually have "q_proj", "k_proj",
+            # "query", "key", "attn" in their name
+            lower = name.lower()
+            is_attn = any(
+                kw in lower
+                for kw in ["q_proj", "k_proj", "query", "key", "attn", "attention"]
+            )
+            if not is_attn:
+                continue
+
+            try:
+                # Row-wise L2 norms as a proxy for head importance
+                w_2d = w.reshape(-1, w.shape[-1])
+                norms = torch.norm(w_2d, dim=1).numpy()
+                norms = norms / (norms.sum() + 1e-10)
+                norms = norms[norms > 1e-10]
+                ent = float(-np.sum(norms * np.log(norms + 1e-10)))
+                attn_entropy_values.append(ent)
+            except Exception:
+                continue
+
+        if not attn_entropy_values:
+            return {"attn_entropy": 0.0}
+
+        return {"attn_entropy": float(np.mean(attn_entropy_values))}
+
+    def _ffn_norm_analysis(
