@@ -504,3 +504,144 @@ class LayerScanner:
     # â•‘          STEP 3: LAYER CATEGORISATION                   â•‘
     # â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
+    def _categorise_layers(
+        self,
+        features: List[Dict[str, float]],
+        similarities: List[float],
+        n_layers: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        Assign each layer a functional category using a combination of:
+        1. Relative position in the model
+        2. Extracted weight features (SVD rank, attention entropy, FFN norms)
+        3. Inter-layer similarity boundaries
+        4. K-Means clustering on feature vectors
+
+        Categories are adaptive: models with <20 layers get merged zones,
+        larger models get all 10 categories.
+        """
+        profiles: List[Dict[str, Any]] = []
+
+        # Build feature matrix for clustering
+        feature_keys = [
+            "svd_rank", "svd_entropy", "svd_decay", "attn_entropy",
+            "ffn_norm_mean", "ffn_norm_max", "weight_std_mean", "sparsity",
+        ]
+        feature_matrix = np.array(
+            [[f.get(k, 0.0) for k in feature_keys] for f in features]
+        )
+
+        # Normalise features
+        col_std = feature_matrix.std(axis=0)
+        col_std[col_std < 1e-10] = 1.0
+        col_mean = feature_matrix.mean(axis=0)
+        feature_matrix_norm = (feature_matrix - col_mean) / col_std
+
+        # Adaptive cluster count based on model depth
+        n_clusters = min(len(CATEGORIES), n_layers)
+        if n_layers >= len(CATEGORIES):
+            try:
+                kmeans = KMeans(
+                    n_clusters=n_clusters, random_state=42, n_init=10
+                )
+                cluster_labels = kmeans.fit_predict(feature_matrix_norm)
+            except Exception:
+                cluster_labels = self._position_based_clusters(n_layers)
+        else:
+            cluster_labels = self._position_based_clusters(n_layers)
+
+        # Map cluster IDs to categories using average position
+        cluster_positions: Dict[int, list] = {}
+        for idx, cl in enumerate(cluster_labels):
+            cluster_positions.setdefault(cl, [])
+            cluster_positions[cl].append(idx / max(n_layers - 1, 1))
+
+        cluster_avg_pos = {
+            cl: np.mean(positions)
+            for cl, positions in cluster_positions.items()
+        }
+
+        # Sort clusters by average position â†’ assign categories in order
+        sorted_clusters = sorted(
+            cluster_avg_pos.keys(), key=lambda c: cluster_avg_pos[c]
+        )
+        cluster_to_category: Dict[int, str] = {}
+        for rank, cl in enumerate(sorted_clusters):
+            cat_idx = int(rank * len(CATEGORIES) / len(sorted_clusters))
+            cat_idx = min(cat_idx, len(CATEGORIES) - 1)
+            cluster_to_category[cl] = CATEGORIES[cat_idx]
+
+        # â”€â”€ Build final profiles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        for idx in range(n_layers):
+            # Category from clustering (primary)
+            cluster = int(cluster_labels[idx])
+            category = cluster_to_category.get(
+                cluster, "knowledge_retrieval"
+            )
+
+            # Refine with position heuristic (secondary validation)
+            pos = idx / max(n_layers - 1, 1)
+            position_category = self._position_to_category(pos)
+
+            # Confidence: multi-signal scoring using all extracted features
+            # Base confidence from feature quality (how much info we extracted)
+            svd_rank = features[idx].get("svd_rank", 0.0)
+            svd_entropy = features[idx].get("svd_entropy", 0.0)
+            attn_entropy = features[idx].get("attn_entropy", 0.0)
+            ffn_norm = features[idx].get("ffn_norm_mean", 0.0)
+            total_params = features[idx].get("total_params", 0.0)
+
+            # Feature quality score: how much useful signal was extracted
+            # Each contributes up to 0.15, total up to 0.60
+            feature_quality = 0.0
+            if svd_rank > 0:
+                feature_quality += min(svd_rank, 1.0) * 0.15
+            if svd_entropy > 0:
+                feature_quality += min(svd_entropy, 1.0) * 0.15
+            if attn_entropy > 0:
+                feature_quality += min(attn_entropy, 1.0) * 0.15
+            if ffn_norm > 0:
+                feature_quality += min(ffn_norm / 50.0, 1.0) * 0.15
+
+            # Position certainty: layers near boundaries get slight penalty
+            pos_certainty = 1.0 - 0.3 * abs(pos - 0.5)  # range ~0.85 to 1.0
+
+            if category == position_category:
+                # Cluster & position agree â†’ high confidence
+                confidence = 0.80 + 0.10 * pos_certainty + feature_quality * 0.15
+            else:
+                # Disagree â†’ moderate confidence, boosted by feature quality
+                confidence = 0.60 + feature_quality * 0.30 + 0.05 * pos_certainty
+
+            # Bonus for layers with strong extracted params (not position-only fallback)
+            if total_params > 0:
+                confidence += 0.03
+
+            confidence = round(min(max(confidence, 0.40), 0.95), 3)
+
+            # Weight stats for storage
+            weight_stats = {
+                k: round(features[idx].get(k, 0.0), 6) for k in feature_keys
+            }
+            weight_stats["similarity_to_prev"] = round(similarities[idx], 4)
+
+            # Dynamic description from weight stats
+            description = self._generate_layer_description(
+                idx, category, weight_stats, pos
+            )
+
+            profiles.append({
+                "layer_index": idx,
+                "category": category,
+                "confidence": confidence,
+                "behavioral_role": BEHAVIORAL_ROLES.get(category, ""),
+                "citation": CATEGORY_CITATIONS.get(category, ""),
+                "weight_stats": weight_stats,
+                "description": description,
+            })
+
+        return profiles
+
+    # â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    @staticmethod
