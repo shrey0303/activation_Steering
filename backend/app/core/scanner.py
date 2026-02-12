@@ -387,3 +387,39 @@ class LayerScanner:
         return {"attn_entropy": float(np.mean(attn_entropy_values))}
 
     def _ffn_norm_analysis(
+        self, weights: Dict[str, torch.Tensor]
+    ) -> Dict[str, float]:
+        """
+        Analyse feed-forward network weight magnitudes.
+
+        Large norms â†’ strong non-linear transformation (reasoning).
+        Small norms â†’ light processing (embedding / output).
+        """
+        ffn_norms: List[float] = []
+
+        for name, w in weights.items():
+            lower = name.lower()
+            is_ffn = any(
+                kw in lower
+                for kw in [
+                    "mlp", "ffn", "fc", "gate", "up_proj",
+                    "down_proj", "dense", "intermediate",
+                ]
+            )
+            if not is_ffn:
+                continue
+
+            try:
+                norm_val = float(torch.norm(w.float()).item())
+                ffn_norms.append(norm_val)
+            except Exception:
+                continue
+
+        if not ffn_norms:
+            return {"ffn_norm_mean": 0.0, "ffn_norm_max": 0.0}
+
+        return {
+            "ffn_norm_mean": float(np.mean(ffn_norms)),
+            "ffn_norm_max": float(np.max(ffn_norms)),
+        }
+
