@@ -343,3 +343,144 @@ class SteeringEngine:
     # â•‘               HOOK MANAGEMENT                           â•‘
     # â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
+    def add_intervention(
+        self,
+        layer_idx: int,
+        strength: float,
+        direction_vector: Optional[torch.Tensor] = None,
+        gate_threshold: Optional[float] = None,
+        norm_tolerance: float = 0.05,
+        decay_rate: float = 0.006,
+        mode: str = "steer",
+    ) -> None:
+        """Register a production-grade steering hook at the given layer."""
+        if not self.mm.loaded:
+            raise RuntimeError("Model not loaded")
+
+        # Remove existing hook on this layer if any
+        self.remove_intervention(layer_idx)
+
+        layers = self.mm.get_layer_modules()
+        if layer_idx < 0 or layer_idx >= len(layers):
+            raise ValueError(
+                f"Layer index {layer_idx} out of range [0, {len(layers)-1}]"
+            )
+
+        hook = SteeringHook(
+            layer_idx=layer_idx,
+            strength=strength,
+            direction_vector=direction_vector,
+            gate_threshold=gate_threshold,
+            norm_tolerance=norm_tolerance,
+            decay_rate=decay_rate,
+            mode=mode,
+        )
+        handle = layers[layer_idx].register_forward_hook(hook.get_hook_fn())
+        hook.handle = handle
+        self._hooks[layer_idx] = hook
+
+        # Log gate threshold info for diagnostics
+        logger.info(
+            f"Hook registered: layer={layer_idx}, strength={strength:.1f}, "
+            f"mode={mode}, norm_tol={norm_tolerance}, decay={decay_rate}, "
+            f"hidden_dim={self.mm.hidden_dim}"
+        )
+
+    def remove_intervention(self, layer_idx: int) -> None:
+        """Remove hook from a specific layer."""
+        if layer_idx in self._hooks:
+            hook = self._hooks.pop(layer_idx)
+            if hook.handle is not None:
+                hook.handle.remove()
+            logger.debug(f"Hook removed from layer {layer_idx}")
+
+    def clear_interventions(self) -> None:
+        """Remove all hooks."""
+        for layer_idx in list(self._hooks.keys()):
+            self.remove_intervention(layer_idx)
+        logger.info("All steering hooks cleared")
+
+    @property
+    def active_interventions(self) -> List[Dict[str, Any]]:
+        """Serialisable list of currently active interventions."""
+        return [
+            {
+                "layer": h.layer_idx,
+                "strength": h.strength,
+                "fired": h.fired,
+                "overhead_ms": round(h.overhead_ms, 2),
+                "token_count": h.token_count,
+                "cooldown_remaining": h.cooldown_remaining,
+                "gate_threshold": round(h.gate_threshold, 4),
+                "diagnostics": {
+                    "gated": h.last_diagnostics.gated,
+                    "cooldown_active": h.last_diagnostics.cooldown_active,
+                    "norm_deviation": round(h.last_diagnostics.norm_deviation, 4),
+                    "effective_strength": round(h.last_diagnostics.effective_strength, 2),
+                    "cosine_similarity": round(h.last_diagnostics.cosine_similarity, 4),
+                },
+            }
+            for h in self._hooks.values()
+        ]
+
+    @property
+    def total_overhead_ms(self) -> float:
+        return sum(h.overhead_ms for h in self._hooks.values())
+
+    def _reset_hooks_for_generation(self) -> None:
+        """Reset all hooks and orthogonalize vectors for new generation."""
+        for h in self._hooks.values():
+            h.reset_token_count()
+        # Gram-Schmidt: ensure multi-vector mutual orthogonality
+        self._orthogonalize_hooks()
+
+    def _orthogonalize_hooks(self) -> None:
+        """
+        Gram-Schmidt orthogonalization for multi-vector composition.
+
+        When multiple hooks are active, their direction vectors may overlap.
+        This ensures each vector steers an independent axis â€” zero interference.
+
+        Paper: "Multi-Attribute Orthogonal Subspace Steering"
+        """
+        hooks = [h for h in self._hooks.values() if h.direction_vector is not None]
+        if len(hooks) < 2:
+            return
+
+        # Force-cache all vectors on same device
+        device = None
+        for h in hooks:
+            if h._v_cached is not None:
+                device = h._v_cached.device
+                break
+        if device is None:
+            return  # vectors not yet cached â€” will be done on first forward
+
+        # Gram-Schmidt
+        for i in range(1, len(hooks)):
+            vi = hooks[i]._v_cached
+            if vi is None:
+                continue
+            for j in range(i):
+                vj = hooks[j]._v_cached
+                if vj is None:
+                    continue
+                # Subtract projection of vi onto vj
+                vi = vi - (vi @ vj / (vj @ vj + 1e-8)) * vj
+            hooks[i]._v_cached = F.normalize(vi, dim=-1)
+
+        logger.debug(f"Gram-Schmidt: orthogonalized {len(hooks)} steering vectors")
+
+    def _trigger_cooldown(self) -> None:
+        """Activate cooldown on all hooks (circuit breaker)."""
+        for h in self._hooks.values():
+            h.cooldown_remaining = self.cooldown_tokens
+        logger.warning(
+            f"Circuit breaker: cooldown {self.cooldown_tokens} tokens on all hooks"
+        )
+
+    # â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+    # â•‘                TEXT GENERATION                          â•‘
+    # â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+    @torch.no_grad()
