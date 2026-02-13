@@ -282,3 +282,64 @@ class SteeringHook:
 # â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 
+class SteeringEngine:
+    """
+    Orchestrates production-grade steering hooks on the loaded model.
+
+    Features:
+      - Multi-layer orthogonal steering
+      - Logit entropy circuit breaker (cooldown-based)
+      - Per-token diagnostics streaming
+      - Clean hook lifecycle management
+    """
+
+    # Default entropy threshold for circuit breaker.
+    # Normal generation entropy â‰ˆ 2-4 nats. Spike above 6 = model confused.
+    DEFAULT_ENTROPY_THRESHOLD = 6.0
+    DEFAULT_COOLDOWN_TOKENS = 5
+
+    # â”€â”€ Singleton â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    _instance: Optional["SteeringEngine"] = None
+
+    @classmethod
+    def get_instance(cls, model_manager: Optional[ModelManager] = None) -> "SteeringEngine":
+        """
+        Return the shared SteeringEngine singleton.
+
+        If no instance exists yet a ModelManager must be provided.
+        If the model manager changes (e.g. model was reloaded),
+        the existing hooks are cleared and the reference is updated.
+        """
+        if cls._instance is None:
+            if model_manager is None:
+                raise RuntimeError(
+                    "SteeringEngine has not been initialised yet â€” "
+                    "pass a ModelManager on the first call."
+                )
+            cls._instance = cls(model_manager)
+            logger.info("SteeringEngine singleton created")
+        elif model_manager is not None and model_manager is not cls._instance.mm:
+            # Model manager changed â†’ clear stale hooks
+            cls._instance.clear_interventions()
+            cls._instance.mm = model_manager
+            logger.info("SteeringEngine singleton updated with new ModelManager")
+        return cls._instance
+
+    @classmethod
+    def reset_instance(cls) -> None:
+        """Destroy the singleton (used when unloading a model)."""
+        if cls._instance is not None:
+            cls._instance.clear_interventions()
+            cls._instance = None
+            logger.info("SteeringEngine singleton reset")
+
+    def __init__(self, model_manager: ModelManager) -> None:
+        self.mm = model_manager
+        self._hooks: Dict[int, SteeringHook] = {}
+        self.entropy_threshold = self.DEFAULT_ENTROPY_THRESHOLD
+        self.cooldown_tokens = self.DEFAULT_COOLDOWN_TOKENS
+
+    # â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+    # â•‘               HOOK MANAGEMENT                           â•‘
+    # â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
