@@ -198,3 +198,43 @@ class SteeringHook:
                 x_last_norm = F.normalize(x_last, dim=-1)
                 cos_sim = (x_last_norm * v).sum(dim=-1).mean().item()
                 diag.cosine_similarity = cos_sim
+
+                if cos_sim > self.gate_threshold:
+                    diag.gated = True
+                    self.last_diagnostics = diag
+                    return output  # model already heading there
+
+                # â”€â”€ STEP 3: Steering or Erasure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                if self.mode == "erase":
+                    # LEACE null-space: remove ALL linear info about v
+                    # x_erased = x - (xÂ·vÌ‚)vÌ‚  (project onto null-space of v)
+                    proj_coeff = (x * v).sum(dim=-1, keepdim=True)  # (batch, seq, 1)
+                    x_new = x - proj_coeff * v  # erase concept direction
+                    diag.effective_strength = 0.0  # erasure is binary
+                else:
+                    # Orthogonal projection + adaptive decay (default)
+                    # v_orth = v - proj_x(v) = v - (vÂ·xÌ‚)xÌ‚
+                    x_norm = F.normalize(x, dim=-1)
+                    proj_coeff = (x_norm * v).sum(dim=-1, keepdim=True)
+                    proj = proj_coeff * x_norm
+                    v_orth = v - proj  # orthogonal component
+
+                    # Adaptive decay: full strength early, decay over time
+                    decay = max(self.min_decay, 1.0 - self.token_count * self.decay_rate)
+                    effective_strength = self.strength * decay
+
+                    # Auto-scale by activation norm for model-size invariance
+                    # This makes strength=2.5 produce ~same relative effect
+                    # on 7B as it does on 0.5B
+                    act_norm = x.norm(dim=-1, keepdim=True).mean().item()
+                    scale_factor = max(act_norm / 10.0, 1.0)  # normalize: ~5-10 on 0.5B â†’ scale ~1x
+                    effective_strength = effective_strength * scale_factor
+                    diag.effective_strength = effective_strength
+
+                    # Apply steering
+                    x_new = x + effective_strength * v_orth
+
+                # â”€â”€ STEP 4: L2 Norm Preservation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                orig_norm = x.norm(dim=-1, keepdim=True)
+                new_norm = x_new.norm(dim=-1, keepdim=True)
+                # Scale factor: keep within tolerance of original norm
