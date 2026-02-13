@@ -238,3 +238,47 @@ class SteeringHook:
                 orig_norm = x.norm(dim=-1, keepdim=True)
                 new_norm = x_new.norm(dim=-1, keepdim=True)
                 # Scale factor: keep within tolerance of original norm
+                # Use wider tolerance for larger models where perturbation
+                # needs to be proportionally bigger
+                effective_tolerance = self.norm_tolerance
+                if hidden_dim > 2048:
+                    effective_tolerance = max(self.norm_tolerance, 0.25)
+                scale = orig_norm / (new_norm + 1e-8)
+                min_scale = 1.0 - effective_tolerance
+                max_scale = 1.0 + effective_tolerance
+                scale = scale.clamp(min=min_scale, max=max_scale)
+                x_steered = x_new * scale
+
+                # Track norm deviation for diagnostics
+                actual_norm = x_steered.norm(dim=-1).mean().item()
+                orig_norm_val = orig_norm.mean().item()
+                diag.norm_deviation = abs(actual_norm - orig_norm_val) / (orig_norm_val + 1e-8)
+
+                # â”€â”€ STEP 5: Safety â€” NaN/Inf check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                if torch.isnan(x_steered).any() or torch.isinf(x_steered).any():
+                    logger.warning(
+                        f"NaN/Inf at layer {self.layer_idx} â€“ reverting"
+                    )
+                    self.cooldown_remaining = 10  # Extended cooldown
+                    return output
+
+                self.fired = True
+                self.token_count += 1
+                self.last_diagnostics = diag
+
+                # â”€â”€ Reconstruct output preserving KV cache â”€â”€â”€â”€â”€â”€â”€â”€
+                if kv_cache is not None:
+                    return (x_steered,) + kv_cache
+                return x_steered
+
+            finally:
+                self.overhead_ms = (time.perf_counter() - t0) * 1000
+
+        return _hook
+
+
+# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+# â•‘  STEERING ENGINE â€” Orchestrator                              â•‘
+# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
