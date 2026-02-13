@@ -139,3 +139,62 @@ class SteeringHook:
         self._v_cached = None
         self.last_diagnostics = SteeringDiagnostics()
 
+    def get_hook_fn(self) -> Callable:
+        """Return the hook function for PyTorch's register_forward_hook."""
+
+        def _hook(
+            module: torch.nn.Module,
+            input: Any,
+            output: Any,
+        ) -> Any:
+            t0 = time.perf_counter()
+            diag = SteeringDiagnostics(token_index=self.token_count)
+
+            try:
+                # â”€â”€ STEP 0: Extract hidden states, preserve KV cache â”€â”€
+                if isinstance(output, tuple):
+                    x = output[0]           # (batch, seq, hidden_dim)
+                    kv_cache = output[1:]   # past_key_values, attn, etc.
+                else:
+                    x = output
+                    kv_cache = None
+
+                # No direction vector â†’ mean-shift fallback (CAUTION: unpredictable)
+                # This is a heuristic without mathematical basis in steering research.
+                # Prefer always providing a direction_vector from feature extraction.
+                if self.direction_vector is None:
+                    logger.warning(
+                        f"Layer {self.layer_idx}: no direction_vector â€” using mean-shift "
+                        f"fallback (results will be unpredictable)"
+                    )
+                    mean_act = x.mean(dim=-1, keepdim=True)
+                    x_shifted = x + self.strength * mean_act * 0.1
+                    self.fired = True
+                    if kv_cache is not None:
+                        return (x_shifted,) + kv_cache
+                    return x_shifted
+
+                # Calibrate gate on first call
+                hidden_dim = x.shape[-1]
+                self._calibrate_threshold(hidden_dim)
+
+                # Cache direction vector on correct device/dtype
+                if self._v_cached is None or self._v_cached.device != x.device:
+                    v = self.direction_vector.to(x.device, dtype=x.dtype)
+                    # L2-normalize for stable cosine computations
+                    self._v_cached = F.normalize(v, dim=-1)
+                v = self._v_cached
+
+                # â”€â”€ STEP 1: Cooldown check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                if self.cooldown_remaining > 0:
+                    self.cooldown_remaining -= 1
+                    diag.cooldown_active = True
+                    self.last_diagnostics = diag
+                    return output  # pass through unmodified
+
+                # â”€â”€ STEP 2: Gating â€” skip if already aligned â”€â”€â”€â”€â”€â”€
+                # Use last token position for gating decision
+                x_last = x[:, -1, :]  # (batch, hidden_dim)
+                x_last_norm = F.normalize(x_last, dim=-1)
+                cos_sim = (x_last_norm * v).sum(dim=-1).mean().item()
+                diag.cosine_similarity = cos_sim
