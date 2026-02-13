@@ -95,3 +95,47 @@ class SteeringHook:
         self._v_cached: Optional[torch.Tensor] = None
         self._threshold_calibrated: bool = False
 
+    def _calibrate_threshold(self, hidden_dim: int) -> None:
+        """
+        Auto-calibrate gate threshold based on hidden dimension.
+
+        In D-dimensional space, two random unit vectors have expected
+        cosine similarity ~ 0. The std is ~1/sqrt(D).
+        We set threshold = 3 * 1/sqrt(D) so gating only triggers
+        when alignment is statistically significant.
+        """
+        if self._threshold_calibrated:
+            return
+        if self._gate_threshold_override is not None:
+            self._threshold_calibrated = True
+            return
+
+        # 3-sigma above random baseline for small models
+        # For large models (hidden_dim > 2048): disable gating entirely.
+        # 7B+ models have strong concept specialization â€” activations are
+        # naturally aligned with steering vectors, causing gate to fire
+        # on every call and return output unmodified.
+        if hidden_dim > 2048:
+            self.gate_threshold = 999.0  # effectively disabled
+            self._threshold_calibrated = True
+            logger.debug(
+                f"Layer {self.layer_idx}: gating DISABLED "
+                f"(hidden_dim={hidden_dim} > 2048)"
+            )
+        else:
+            self.gate_threshold = 3.0 / math.sqrt(hidden_dim)
+            self._threshold_calibrated = True
+            logger.debug(
+                f"Layer {self.layer_idx}: gate threshold "
+                f"{self.gate_threshold:.4f} (hidden_dim={hidden_dim})"
+            )
+
+    def reset_token_count(self) -> None:
+        """Reset for a new generation."""
+        self.token_count = 0
+        self.cooldown_remaining = 0
+        self.fired = False
+        self.overhead_ms = 0.0
+        self._v_cached = None
+        self.last_diagnostics = SteeringDiagnostics()
+
