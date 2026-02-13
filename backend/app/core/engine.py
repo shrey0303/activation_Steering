@@ -484,3 +484,135 @@ class SteeringEngine:
     # â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @torch.no_grad()
+    def generate(
+        self,
+        prompt: str,
+        max_tokens: int = 200,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+    ) -> Dict[str, Any]:
+        """
+        Run generation with production-grade hooks.
+
+        Returns dict with: text, tokens_generated, latency_ms,
+        tokens_per_sec, steering_applied, steering_overhead_ms,
+        interventions.
+        """
+        if not self.mm.loaded:
+            raise RuntimeError("Model not loaded")
+
+        model = self.mm.model
+        tokenizer = self.mm.tokenizer
+        device = self.mm.device
+
+        inputs = tokenizer(prompt, return_tensors="pt").to(device)
+
+        self._reset_hooks_for_generation()
+
+        t0 = time.perf_counter()
+
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_tokens,
+            temperature=max(temperature, 0.01),
+            top_p=top_p,
+            do_sample=temperature > 0,
+            pad_token_id=tokenizer.pad_token_id,
+        )
+
+        elapsed = time.perf_counter() - t0
+
+        new_token_ids = outputs[0][inputs["input_ids"].shape[1]:]
+        generated_text = tokenizer.decode(new_token_ids, skip_special_tokens=True)
+        tokens_generated = len(new_token_ids)
+
+        return {
+            "text": generated_text,
+            "prompt": prompt,
+            "tokens_generated": tokens_generated,
+            "latency_ms": round(elapsed * 1000, 1),
+            "tokens_per_sec": round(
+                tokens_generated / max(elapsed, 0.001), 1
+            ),
+            "steering_applied": len(self._hooks) > 0,
+            "steering_overhead_ms": round(self.total_overhead_ms, 2),
+            "interventions": self.active_interventions,
+        }
+
+    # â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+    # â•‘             ACTIVATION CAPTURE                          â•‘
+    # â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+    @torch.no_grad()
+    def capture_activations(
+        self,
+        prompt: str,
+        layers: Optional[List[int]] = None,
+        aggregation: str = "mean",
+    ) -> Dict[int, float]:
+        """
+        Forward pass to capture per-layer activation magnitudes.
+
+        Parameters
+        ----------
+        prompt : str
+        layers : list[int] | None
+            Specific layers to capture.  None â†’ all layers.
+        aggregation : {"mean", "max", "l2norm"}
+
+        Returns
+        -------
+        dict mapping layer_index â†’ normalised scalar value
+        """
+        if not self.mm.loaded:
+            raise RuntimeError("Model not loaded")
+
+        model = self.mm.model
+        tokenizer = self.mm.tokenizer
+        device = self.mm.device
+
+        all_layers = self.mm.get_layer_modules()
+        target_indices = layers if layers else list(range(len(all_layers)))
+
+        activations: Dict[int, float] = {}
+        handles: List[torch.utils.hooks.RemovableHook] = []
+
+        for idx in target_indices:
+            if idx < 0 or idx >= len(all_layers):
+                continue
+
+            def make_hook(layer_idx: int):
+                def _capture(module, inp, out):
+                    h = out[0] if isinstance(out, tuple) else out
+                    h = h.float()
+                    if aggregation == "mean":
+                        val = h.abs().mean().item()
+                    elif aggregation == "max":
+                        val = h.abs().max().item()
+                    elif aggregation == "l2norm":
+                        val = torch.norm(h).item()
+                    else:
+                        val = h.abs().mean().item()
+                    activations[layer_idx] = val
+                return _capture
+
+            handle = all_layers[idx].register_forward_hook(make_hook(idx))
+            handles.append(handle)
+
+        inputs = tokenizer(prompt, return_tensors="pt").to(device)
+        model(**inputs)
+
+        for h in handles:
+            h.remove()
+
+        if activations:
+            max_val = max(activations.values()) or 1.0
+            activations = {k: v / max_val for k, v in activations.items()}
+
+        return activations
+
+    # â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+    # â•‘         STREAMING GENERATION + CIRCUIT BREAKER           â•‘
+    # â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+    @torch.no_grad()
