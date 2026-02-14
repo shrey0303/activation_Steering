@@ -232,3 +232,129 @@ class FeatureExtractor:
     # â”€â”€ Step 1: Activation Collection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @torch.no_grad()
+    def _collect_activations(
+        self,
+        model: torch.nn.Module,
+        tokenizer: Any,
+        layer_modules: List[torch.nn.Module],
+        prompts: List[str],
+        device: str,
+    ) -> Dict[int, torch.Tensor]:
+        """
+        Run prompts through the model and collect residual stream
+        activations at each layer.
+
+        Returns: dict mapping layer_idx â†’ tensor(n_prompts, hidden_dim)
+        """
+        n_layers = len(layer_modules)
+        layer_activations: Dict[int, List[torch.Tensor]] = {
+            i: [] for i in range(n_layers)
+        }
+        handles = []
+
+        # Register hooks on all layers
+        for idx in range(n_layers):
+            def make_hook(layer_idx: int):
+                def _capture(module, inp, out):
+                    h = out[0] if isinstance(out, tuple) else out
+                    # Mean pool across sequence dimension â†’ (batch, hidden_dim)
+                    pooled = h.float().mean(dim=1)
+                    layer_activations[layer_idx].append(pooled.cpu())
+                return _capture
+            handle = layer_modules[idx].register_forward_hook(make_hook(idx))
+            handles.append(handle)
+
+        # Run all prompts
+        total = len(prompts)
+        batch_size = 8
+        for start in range(0, total, batch_size):
+            batch = prompts[start : start + batch_size]
+            inputs = tokenizer(
+                batch,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=128,
+            ).to(device)
+            model(**inputs)
+
+            if (start // batch_size) % 10 == 0:
+                logger.info(
+                    f"Collecting activations: {min(start + batch_size, total)}/{total}"
+                )
+
+        # Remove hooks
+        for h in handles:
+            h.remove()
+
+        # Concatenate
+        result = {}
+        for idx in range(n_layers):
+            if layer_activations[idx]:
+                result[idx] = torch.cat(layer_activations[idx], dim=0)
+                # result[idx] shape: (n_prompts, hidden_dim)
+
+        logger.info(
+            f"Collected activations: {len(result)} layers, "
+            f"{result[0].shape[0]} samples each"
+        )
+        return result
+
+    # â”€â”€ Step 2: PCA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    def _run_pca(
+        self,
+        activations: Dict[int, torch.Tensor],
+    ) -> Dict[int, Tuple[np.ndarray, np.ndarray]]:
+        """
+        Run PCA on each layer's activations.
+
+        Returns: dict mapping layer_idx â†’ (components, explained_variance)
+          components: (top_k, hidden_dim)
+          explained_variance: (top_k,) â€” fraction of variance
+        """
+        results = {}
+
+        for layer_idx, acts in activations.items():
+            # Center the data
+            acts_np = acts.numpy()
+            mean = acts_np.mean(axis=0)
+            centered = acts_np - mean
+
+            # SVD-based PCA (more numerically stable than covariance)
+            # centered: (n_samples, hidden_dim)
+            try:
+                U, S, Vt = np.linalg.svd(centered, full_matrices=False)
+            except np.linalg.LinAlgError:
+                logger.warning(f"SVD failed for layer {layer_idx}, skipping")
+                continue
+
+            # Top-K components
+            k = min(self.top_k, len(S))
+            components = Vt[:k]  # (k, hidden_dim)
+
+            # Explained variance ratio
+            total_variance = (S ** 2).sum()
+            explained = (S[:k] ** 2) / total_variance
+
+            # Min-variance filter: drop noise components (< 0.1%)
+            keep_mask = explained >= self.min_variance
+            components = components[keep_mask]
+            explained = explained[keep_mask]
+
+            if len(components) == 0:
+                logger.warning(f"Layer {layer_idx}: all components below min_variance")
+                continue
+
+            results[layer_idx] = (components, explained)
+            logger.debug(
+                f"Layer {layer_idx}: {len(components)} PCs (filtered from {k}) explain "
+                f"{explained.sum()*100:.1f}% variance"
+            )
+
+        logger.info(f"PCA complete: {len(results)} layers processed")
+        return results
+
+    # â”€â”€ Step 3: Auto-Labeling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    @torch.no_grad()
