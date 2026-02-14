@@ -358,3 +358,99 @@ class FeatureExtractor:
     # â”€â”€ Step 3: Auto-Labeling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @torch.no_grad()
+    def _auto_label_component(
+        self,
+        model: torch.nn.Module,
+        tokenizer: Any,
+        layer_module: torch.nn.Module,
+        component: np.ndarray,
+        device: str,
+    ) -> str:
+        """
+        Label a PCA component using contrastive generation.
+
+        Contrastive approach (CAA-style, doubles signal):
+          1. Generate with component AMPLIFIED (+strength)
+          2. Generate with component SUPPRESSED (-strength)
+          3. delta = embed(amplified) - embed(suppressed)
+          4. Match delta to behavioral keywords
+        """
+        if self._embedder is None:
+            return ""
+
+        prompts = get_labeling_prompts()[:5]
+        v = torch.from_numpy(component).to(device=device, dtype=torch.float32)
+        v = F.normalize(v, dim=-1)
+
+        def generate_texts(steer_strength: float) -> List[str]:
+            """Generate text with given steering strength (0 = no steering)."""
+            handle = None
+            if steer_strength != 0:
+                def hook_fn(module, inp, out):
+                    if isinstance(out, tuple):
+                        x = out[0]
+                        rest = out[1:]
+                    else:
+                        x = out
+                        rest = None
+                    x = x + steer_strength * v
+                    # Norm preservation
+                    orig_norm = (out[0] if isinstance(out, tuple) else out).norm(dim=-1, keepdim=True)
+                    new_norm = x.norm(dim=-1, keepdim=True)
+                    scale = (orig_norm / (new_norm + 1e-8)).clamp(0.95, 1.05)
+                    x = x * scale
+                    if rest is not None:
+                        return (x,) + rest
+                    return x
+                handle = layer_module.register_forward_hook(hook_fn)
+
+            texts = []
+            for prompt in prompts:
+                inputs = tokenizer(prompt, return_tensors="pt").to(device)
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=self.labeling_max_tokens,
+                    temperature=0.7,
+                    do_sample=True,
+                    pad_token_id=tokenizer.pad_token_id,
+                )
+                new_ids = outputs[0][inputs["input_ids"].shape[1]:]
+                texts.append(tokenizer.decode(new_ids, skip_special_tokens=True))
+
+            if handle is not None:
+                handle.remove()
+            return texts
+
+        # Contrastive generation: amplify vs suppress (CAA-style)
+        amplified_texts = generate_texts(+self.labeling_strength)
+        suppressed_texts = generate_texts(-self.labeling_strength)
+
+        # Embed both sets
+        amplified_emb = self._embedder.encode(amplified_texts)
+        suppressed_emb = self._embedder.encode(suppressed_texts)
+
+        # Contrastive delta: 2x signal strength vs single-sided
+        delta = (amplified_emb - suppressed_emb).mean(axis=0)
+        delta_norm = np.linalg.norm(delta)
+
+        if delta_norm < 0.01:
+            return ""  # No meaningful change
+
+        # Compare delta to behavioral keywords
+        keyword_emb = self._embedder.encode(BEHAVIORAL_KEYWORDS)
+        delta_normalized = delta / (delta_norm + 1e-8)
+
+        # Cosine similarity
+        sims = (keyword_emb * delta_normalized).sum(axis=1)
+        best_idx = sims.argmax()
+        best_sim = sims[best_idx]
+
+        if best_sim < 0.15:
+            return ""  # No confident match
+
+        label = BEHAVIORAL_KEYWORDS[best_idx]
+        logger.debug(f"Auto-label: sim={best_sim:.3f} â†’ '{label}'")
+        return label
+
+    # â”€â”€ Step 4: Storage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
