@@ -1,17 +1,17 @@
 """
-Intent Router + Response Interpreter (v5 â€” Production Architecture).
+Intent Router + Response Interpreter (v5 — Production Architecture).
 
 Two systems in one file:
 
-1. IntentRouter (NEW â€” Phase 2):
+1. IntentRouter (NEW — Phase 2):
    Maps user text to PCA feature IDs via cosine similarity.
    No training data needed. No external LLM API.
 
    Two modes:
      - Browse: User picks features from the dictionary directly
-     - Text:   "be angry" â†’ cosine sim â†’ top 3 matching features
+     - Text:   "be angry" → cosine sim → top 3 matching features
 
-2. ResponseInterpreter (LEGACY â€” backward compat):
+2. ResponseInterpreter (LEGACY — backward compat):
    Kept for routes.py analyze endpoint.
    Per-layer bidirectional matching using sentence-transformers.
 """
@@ -32,9 +32,9 @@ except ImportError:
     _HAS_TEXTBLOB = False
 
 
-# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-# â•‘  DATA CLASSES                                                â•‘
-# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  DATA CLASSES                                                ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 
 @dataclass
@@ -75,39 +75,39 @@ class IntentRouterResult:
         }
 
 
-# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-# â•‘  INTENT ROUTER (Phase 2 â€” Production)                       â•‘
-# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  INTENT ROUTER (Phase 2 — Production)                       ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 
 class IntentRouter:
     """
     Map user text to PCA feature IDs using a two-stage pipeline.
 
-    Stage 1 â€” Retrieval (Bi-Encoder):
+    Stage 1 — Retrieval (Bi-Encoder):
         Sentence-BERT (all-MiniLM-L6-v2) embeds user text and feature labels
         independently, then ranks by cosine similarity.
-        This finds WHICH features match the topic (e.g., "toxic" â†’ toxicity).
+        This finds WHICH features match the topic (e.g., "toxic" → toxicity).
 
-    Stage 2 â€” Direction (NLI Cross-Encoder):
+    Stage 2 — Direction (NLI Cross-Encoder):
         For each top-K candidate, NLI cross-encoder scores user text against
         "Amplify {label}" to determine enhance vs suppress.
-        This handles NEGATION natively (e.g., "less toxic" â†’ suppress).
+        This handles NEGATION natively (e.g., "less toxic" → suppress).
 
-    Why both? NLI alone finds spurious cross-concept relationships â€” "more
+    Why both? NLI alone finds spurious cross-concept relationships — "more
     toxic" vs "Amplify anger" scores contradiction=0.998, beating the correct
     match. Bi-encoder correctly isolates topic matching; NLI correctly
     determines direction. Together they're accurate. Separately they aren't.
 
     Models:
-        - all-MiniLM-L6-v2 (22M params, ~80MB) â€” retrieval
-        - cross-encoder/nli-deberta-v3-small (22M params, ~80MB) â€” direction
+        - all-MiniLM-L6-v2 (22M params, ~80MB) — retrieval
+        - cross-encoder/nli-deberta-v3-small (22M params, ~80MB) — direction
 
     Usage:
         router = IntentRouter(feature_dict)
         result = router.route("make it less toxic")
         # Bi-encoder finds "toxicity" feature
-        # NLI: "less toxic" vs "Amplify toxicity" â†’ contradiction â†’ suppress
+        # NLI: "less toxic" vs "Amplify toxicity" → contradiction → suppress
     """
 
     def __init__(self, feature_dict=None) -> None:
@@ -188,7 +188,7 @@ class IntentRouter:
         if self._embedder is None or self._label_embeddings is None:
             return IntentRouterResult(query=text, method="no_embedder")
 
-        # â”€â”€ Stage 1: Bi-encoder retrieval â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Stage 1: Bi-encoder retrieval ──────────────────────
         text_emb = self._embedder.encode([text])[0]
 
         text_norm = text_emb / (np.linalg.norm(text_emb) + 1e-8)
@@ -200,7 +200,7 @@ class IntentRouter:
         sims = labels_norm @ text_norm
         top_indices = np.argsort(sims)[::-1][:top_k]
 
-        # â”€â”€ Stage 2: NLI direction classification â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Stage 2: NLI direction classification ──────────────
         self._ensure_cross_encoder()
 
         matches = []
@@ -285,7 +285,7 @@ class IntentRouter:
 
         logger.debug(
             f"NLI direction for '{user_text}' | '{feature_label}': "
-            f"enhance={best_enh:.3f}, suppress={best_sup:.3f} â†’ "
+            f"enhance={best_enh:.3f}, suppress={best_sup:.3f} → "
             f"{'enhance' if direction > 0 else 'suppress'}"
         )
         return direction
@@ -317,7 +317,7 @@ class IntentRouter:
         fd = FeatureDictionary.load(model_name)
         if not fd.all_features:
             logger.info(
-                f"IntentRouter.from_db: no features found for '{model_name}' â€” "
+                f"IntentRouter.from_db: no features found for '{model_name}' — "
                 f"router will use static fallback in ResponseInterpreter"
             )
             return cls(feature_dict=None)
@@ -328,9 +328,9 @@ class IntentRouter:
         return cls(feature_dict=fd)
 
 
-# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-# â•‘  MODULE-LEVEL UTILITIES                                      â•‘
-# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  MODULE-LEVEL UTILITIES                                      ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 
 def _split_clauses(text: str) -> List[str]:
@@ -341,9 +341,9 @@ def _split_clauses(text: str) -> List[str]:
              or, nor, plus, comma-separated phrases, semicolons.
 
     Examples:
-        'be angry and calm'    â†’ ['be angry', 'calm']
-        'toxic but friendly'   â†’ ['toxic', 'friendly']
-        'more dangerous; less polite' â†’ ['more dangerous', 'less polite']
+        'be angry and calm'    → ['be angry', 'calm']
+        'toxic but friendly'   → ['toxic', 'friendly']
+        'more dangerous; less polite' → ['more dangerous', 'less polite']
     """
     pattern = (
         r'\s*(?:\band\b|\bbut\b|\bthough\b|\byet\b|\bwhile\b|\beven\b|'
@@ -353,12 +353,12 @@ def _split_clauses(text: str) -> List[str]:
     return [c.strip() for c in clauses if len(c.strip()) > 2]
 
 
-# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-# â•‘  LEGACY CATEGORY LABELS                                      â•‘
-# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  LEGACY CATEGORY LABELS                                      ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 
-# â”€â”€ Category labels for retrieval (simple names, NOT hardcoded descriptions) â”€
+# ── Category labels for retrieval (simple names, NOT hardcoded descriptions) ─
 # Bi-encoder matches user text against these label embeddings.
 # Direction is determined by NLI cross-encoder, not by description matching.
 LAYER_CATEGORIES = [
@@ -375,7 +375,7 @@ LAYER_CATEGORIES = [
 ]
 
 # Human-readable labels for RETRIEVAL ONLY (bi-encoder step)
-# These are neutral category names â€” NOT used for direction classification.
+# These are neutral category names — NOT used for direction classification.
 CATEGORY_LABELS = {
     "token_embedding": "vocabulary and word choice",
     "positional_morphological": "grammar and syntax",
@@ -392,7 +392,7 @@ CATEGORY_LABELS = {
 # Dual-hypothesis pairs for NLI direction classification.
 # enhance_h: what we test when we suspect the user WANTS MORE of this category.
 # suppress_h: what we test when we suspect the user WANTS LESS of this category.
-# NLI entailment score for each hypothesis is compared â€”
+# NLI entailment score for each hypothesis is compared —
 # whichever is higher determines the direction.
 CATEGORY_HYPOTHESES = {
     "token_embedding": {
@@ -475,7 +475,7 @@ class ResponseInterpreter:
     Two-stage interpreter: bi-encoder retrieval + NLI direction.
 
     Stage 1 (Retrieval): Bi-encoder (all-MiniLM-L6-v2) compares user text
-        against category LABEL embeddings. No hardcoded descriptions â€”
+        against category LABEL embeddings. No hardcoded descriptions —
         just simple names like "safety and toxicity", "personality and style".
 
     Stage 2 (Direction): NLI cross-encoder (nli-deberta-v3-small) determines
@@ -548,3 +548,223 @@ class ResponseInterpreter:
         Use NLI cross-encoder to determine direction for a category.
 
         Tests both enhance and suppress hypotheses, picks whichever
+        the NLI model more strongly entails. This is more robust than
+        a single 'Amplify X' hypothesis, especially for:
+          - Ambiguous words (e.g. 'ethical' for 'safety_alignment')
+          - Negation (e.g. 'not safe' should suppress)
+          - Indirect phrasing
+
+        Returns (direction, confidence):
+          direction: +1.0 (enhance) or -1.0 (suppress)
+          confidence: entailment score of winning hypothesis
+        """
+        if self._nli_model is None:
+            return self._classify_direction_fallback(clause)
+
+        hyps = CATEGORY_HYPOTHESES.get(category)
+        if not hyps:
+            return self._classify_direction_fallback(clause)
+
+        enhance_h = hyps["enhance_h"]
+        suppress_h = hyps["suppress_h"]
+
+        # Run NLI for both hypotheses in one batch
+        scores = self._nli_model.predict([
+            (clause, enhance_h),
+            (clause, suppress_h),
+        ])
+        # scores shape: (2, 3) = [contradiction, entailment, neutral]
+        enh_entail = float(scores[0][1])   # entailment for enhance
+        sup_entail = float(scores[1][1])   # entailment for suppress
+
+        if enh_entail >= sup_entail:
+            return +1.0, enh_entail
+        else:
+            return -1.0, sup_entail
+
+    @staticmethod
+    def _split_clauses(text: str) -> List[str]:
+        """
+        Split compound text into clauses by natural connectors.
+
+        Handles: and, but, though, yet, while, even, however, although,
+                 or, nor, comma-separated phrases, semicolons.
+        """
+        # Split by connectors (word boundaries to avoid splitting mid-word)
+        pattern = r'\s*(?:\band\b|\bbut\b|\bthough\b|\byet\b|\bwhile\b|\beven\b|\bhowever\b|\balthough\b|\bor\b|\bnor\b|[;,])\s*'
+        clauses = re.split(pattern, text, flags=re.IGNORECASE)
+        # Filter empty and very short fragments
+        return [c.strip() for c in clauses if len(c.strip()) > 2]
+
+    @staticmethod
+    def _classify_direction_fallback(text: str) -> Tuple[float, float]:
+        """Keyword fallback when NLI unavailable."""
+        suppress_words = {"less", "reduce", "don't", "not", "no", "without",
+                         "suppress", "remove", "decrease", "stop", "avoid"}
+        words = set(text.lower().split())
+        if words & suppress_words:
+            return -1.0, 0.6
+        return +1.0, 0.6
+
+    @staticmethod
+    def _split_clauses(text: str) -> List[str]:
+        """Delegate to module-level _split_clauses."""
+        return _split_clauses(text)
+
+    def interpret(
+        self,
+        text: str,
+        prompt: str = "",
+    ) -> InterpretationResult:
+        """
+        Interpret user text into layer-level intent scores.
+
+        Primary path (when FeatureDictionary is available):
+          Uses IntentRouter to route to PCA feature IDs from features.db.
+          Zero hardcoding — labels are whatever the DB contains.
+
+        Fallback path (no feature extraction run yet):
+          Three-stage static-category pipeline (LAYER_CATEGORIES + NLI).
+          Provides full functionality out-of-the-box for new users.
+        """
+        # ── Sentiment ──────────────────────────────────────────
+        polarity = 0.0
+        subjectivity = 0.0
+        if _HAS_TEXTBLOB and text:
+            blob = TextBlob(text)
+            polarity = blob.sentiment.polarity
+            subjectivity = blob.sentiment.subjectivity
+
+        # ── PRIMARY PATH: Feature-dict routing (DB-driven) ────
+        if (
+            self._intent_router is not None
+            and self._intent_router.feature_dict is not None
+            and self._intent_router.feature_dict.get_labeled()
+        ):
+            self._intent_router._ensure_embedder()
+            self._intent_router._ensure_cross_encoder()
+
+            result = self._intent_router.route(text, top_k=5)
+
+            # Convert FeatureMatch list to InterpretationResult
+            intent_scores: Dict[str, float] = {}
+            feature_matches = []
+            for m in result.matches:
+                # Use feature_id as key so LayerResolver can find the layer
+                intent_scores[m.feature_id] = m.direction * m.similarity
+                feature_matches.append({
+                    "feature_id": m.feature_id,
+                    "label": m.label,
+                    "layer_idx": m.layer_idx,
+                    "direction": m.direction,
+                    "similarity": m.similarity,
+                })
+
+            dominant = sorted(
+                intent_scores.keys(),
+                key=lambda k: abs(intent_scores[k]),
+                reverse=True,
+            )
+
+            summary_parts = []
+            for fid in dominant[:3]:
+                sc = intent_scores[fid]
+                match = next((m for m in result.matches if m.feature_id == fid), None)
+                label = match.label if match else fid
+                dir_label = "enhance" if sc > 0 else "suppress"
+                summary_parts.append(f"{dir_label} {label} ({abs(sc):.2f})")
+
+            return InterpretationResult(
+                sentiment_polarity=polarity,
+                sentiment_subjectivity=subjectivity,
+                intent_scores=intent_scores,
+                dominant_intents=dominant,
+                summary="; ".join(summary_parts) if summary_parts else "No matches",
+                method="intent_router_db",
+                feature_matches=feature_matches,
+                routed_by_features=True,
+            )
+
+        # ── FALLBACK PATH: Static category + NLI ─────────────
+        # Used when no feature extraction has been run yet.
+        self._ensure_embedder()
+        self._ensure_nli()
+
+        if self._embedder is None:
+            return InterpretationResult(
+                sentiment_polarity=polarity,
+                sentiment_subjectivity=subjectivity,
+                method="fallback",
+            )
+
+        # ── Stage 1: Split into clauses ───────────────────────
+        clauses = self._split_clauses(text)
+        if not clauses:
+            clauses = [text]
+
+        # ── Stage 2: Per-clause category matching ─────────────
+        # For each clause, find which categories it's most relevant to,
+        # then classify direction with NLI only for those categories.
+        # result: dict[category] -> (direction * relevance, raw_relevance)
+        cat_scores: Dict[str, Tuple[float, float]] = {}
+
+        for clause in clauses:
+            clause_emb = self._embedder.encode([clause])[0]
+            clause_norm = clause_emb / (np.linalg.norm(clause_emb) + 1e-8)
+
+            # Cosine similarity of this clause against each category
+            clause_sims = {}
+            all_clause_sims = []
+            for cat in LAYER_CATEGORIES:
+                cat_emb = self._category_embeddings[cat]
+                cat_norm = cat_emb / (np.linalg.norm(cat_emb) + 1e-8)
+                sim = float(np.dot(clause_norm, cat_norm))
+                clause_sims[cat] = sim
+                all_clause_sims.append(sim)
+
+            # Dynamic threshold for this clause
+            sim_arr = np.array(all_clause_sims)
+            threshold = float(sim_arr.mean() + 0.3 * sim_arr.std())
+
+            # ── Stage 3: NLI direction for matched categories ─
+            for cat, sim in clause_sims.items():
+                if sim <= threshold:
+                    continue
+
+                # Pass category KEY (not label) — new dual-hypothesis signature
+                direction, nli_conf = self._classify_direction_nli(clause, cat)
+                score = direction * sim
+
+                # Keep strongest signal per category
+                if cat not in cat_scores or abs(score) > abs(cat_scores[cat][0]):
+                    cat_scores[cat] = (score, sim)
+
+        # Build result
+        intent_scores = {cat: s[0] for cat, s in cat_scores.items()}
+        layer_sims = {cat: s[1] for cat, s in cat_scores.items()}
+        dominant = sorted(
+            intent_scores.keys(),
+            key=lambda c: abs(intent_scores[c]),
+            reverse=True,
+        )
+
+        summary_parts = []
+        for cat in dominant[:3]:
+            score = intent_scores[cat]
+            dir_label = "enhance" if score > 0 else "suppress"
+            display = cat.replace("_", " ").title()
+            summary_parts.append(f"{dir_label} {display} ({abs(score):.2f})")
+
+        method = "nli_clause_v6" if self._nli_model else "embedding_fallback"
+
+        return InterpretationResult(
+            sentiment_polarity=polarity,
+            sentiment_subjectivity=subjectivity,
+            intent_scores=intent_scores,
+            dominant_intents=dominant,
+            summary="; ".join(summary_parts) if summary_parts else "No strong matches",
+            method=method,
+            layer_similarities=layer_sims,
+        )
+
+
