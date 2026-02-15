@@ -348,3 +348,203 @@ def _split_clauses(text: str) -> List[str]:
     pattern = (
         r'\s*(?:\band\b|\bbut\b|\bthough\b|\byet\b|\bwhile\b|\beven\b|'
         r'\bhowever\b|\balthough\b|\bor\b|\bnor\b|\bplus\b|[;,])\s*'
+    )
+    clauses = re.split(pattern, text, flags=re.IGNORECASE)
+    return [c.strip() for c in clauses if len(c.strip()) > 2]
+
+
+# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+# â•‘  LEGACY CATEGORY LABELS                                      â•‘
+# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+# â”€â”€ Category labels for retrieval (simple names, NOT hardcoded descriptions) â”€
+# Bi-encoder matches user text against these label embeddings.
+# Direction is determined by NLI cross-encoder, not by description matching.
+LAYER_CATEGORIES = [
+    "token_embedding",
+    "positional_morphological",
+    "syntactic_processing",
+    "entity_semantic",
+    "knowledge_retrieval",
+    "reasoning_planning",
+    "safety_alignment",
+    "information_integration",
+    "style_personality",
+    "output_distribution",
+]
+
+# Human-readable labels for RETRIEVAL ONLY (bi-encoder step)
+# These are neutral category names â€” NOT used for direction classification.
+CATEGORY_LABELS = {
+    "token_embedding": "vocabulary and word choice",
+    "positional_morphological": "grammar and syntax",
+    "syntactic_processing": "sentence structure",
+    "entity_semantic": "entity and reference understanding",
+    "knowledge_retrieval": "factual knowledge",
+    "reasoning_planning": "reasoning and logic",
+    "safety_alignment": "safe and appropriate behavior",
+    "information_integration": "information coherence",
+    "style_personality": "personality and style",
+    "output_distribution": "output confidence",
+}
+
+# Dual-hypothesis pairs for NLI direction classification.
+# enhance_h: what we test when we suspect the user WANTS MORE of this category.
+# suppress_h: what we test when we suspect the user WANTS LESS of this category.
+# NLI entailment score for each hypothesis is compared â€”
+# whichever is higher determines the direction.
+CATEGORY_HYPOTHESES = {
+    "token_embedding": {
+        "enhance_h": "The speaker wants clearer and more precise vocabulary.",
+        "suppress_h": "The speaker wants vague and imprecise language.",
+    },
+    "positional_morphological": {
+        "enhance_h": "The speaker wants better grammar and correct syntax.",
+        "suppress_h": "The speaker wants broken grammar and bad syntax.",
+    },
+    "syntactic_processing": {
+        "enhance_h": "The speaker wants more complex and sophisticated sentence structure.",
+        "suppress_h": "The speaker wants simple and choppy sentences.",
+    },
+    "entity_semantic": {
+        "enhance_h": "The speaker wants better entity recognition and accurate references.",
+        "suppress_h": "The speaker wants confused entities and wrong references.",
+    },
+    "knowledge_retrieval": {
+        "enhance_h": "The speaker wants a more knowledgeable and factually accurate response.",
+        "suppress_h": "The speaker wants a less knowledgeable and less accurate response.",
+    },
+    "reasoning_planning": {
+        "enhance_h": "The speaker wants more logical and analytical reasoning.",
+        "suppress_h": "The speaker wants illogical and confused reasoning.",
+    },
+    "safety_alignment": {
+        "enhance_h": "The speaker wants a safer, more polite, and harmless response.",
+        "suppress_h": "The speaker wants a more toxic, offensive, or harmful response.",
+    },
+    "information_integration": {
+        "enhance_h": "The speaker wants more coherent and well-integrated information.",
+        "suppress_h": "The speaker wants disjointed and incoherent output.",
+    },
+    "style_personality": {
+        "enhance_h": "The speaker wants a more expressive, friendly, and engaging personality.",
+        "suppress_h": "The speaker wants a bland, dry, and robotic response.",
+    },
+    "output_distribution": {
+        "enhance_h": "The speaker wants more confident and decisive output.",
+        "suppress_h": "The speaker wants uncertain and hedging output.",
+    },
+}
+
+
+@dataclass
+class InterpretationResult:
+    """Structured output of the response interpreter."""
+    sentiment_polarity: float = 0.0
+    sentiment_subjectivity: float = 0.0
+    intent_scores: Dict[str, float] = field(default_factory=dict)
+    dominant_intents: List[str] = field(default_factory=list)
+    keywords_found: List[str] = field(default_factory=list)
+    summary: str = ""
+    method: str = "embedding"
+    layer_similarities: Dict[str, float] = field(default_factory=dict)
+    # Feature-dict routing results (populated when FeatureDictionary is available)
+    feature_matches: List[Dict] = field(default_factory=list)  # [{feature_id, label, layer_idx, direction}]
+    routed_by_features: bool = False  # True when IntentRouter (DB) was used
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "sentiment_polarity": round(self.sentiment_polarity, 3),
+            "sentiment_subjectivity": round(self.sentiment_subjectivity, 3),
+            "intent_scores": {
+                k: round(v, 3) for k, v in self.intent_scores.items()
+            },
+            "dominant_intents": self.dominant_intents,
+            "keywords_found": self.keywords_found,
+            "summary": self.summary,
+            "method": self.method,
+            "layer_similarities": {
+                k: round(v, 3) for k, v in self.layer_similarities.items()
+            },
+        }
+
+
+class ResponseInterpreter:
+    """
+    Two-stage interpreter: bi-encoder retrieval + NLI direction.
+
+    Stage 1 (Retrieval): Bi-encoder (all-MiniLM-L6-v2) compares user text
+        against category LABEL embeddings. No hardcoded descriptions â€”
+        just simple names like "safety and toxicity", "personality and style".
+
+    Stage 2 (Direction): NLI cross-encoder (nli-deberta-v3-small) determines
+        enhance vs suppress per matched category. The NLI model natively
+        understands that "be more toxic" CONTRADICTS "Amplify safety"
+        without needing the word "toxic" in a hardcoded description.
+
+    Falls back to keyword-based direction if NLI model is unavailable.
+    """
+
+    def __init__(self) -> None:
+        self._embedder = None
+        self._nli_model = None
+        self._category_embeddings: Dict[str, Any] = {}
+        # Dynamic routing via FeatureDictionary (injected from routes.py after scan/extract)
+        self._intent_router: Optional["IntentRouter"] = None
+
+    def set_intent_router(self, router: "IntentRouter") -> None:
+        """Inject a FeatureDictionary-backed IntentRouter for dynamic routing.
+        Called from routes.py after model load + feature extraction.
+        """
+        self._intent_router = router
+        labels = []
+        if router.feature_dict is not None:
+            labels = router.feature_dict.all_labels
+        logger.info(
+            f"ResponseInterpreter: dynamic router injected "
+            f"({len(labels)} feature labels available)"
+        )
+
+    def set_feature_dict(self, feature_dict) -> None:
+        """Convenience: wrap a FeatureDictionary in an IntentRouter and inject it."""
+        router = IntentRouter(feature_dict=feature_dict)
+        self.set_intent_router(router)
+
+    def _ensure_embedder(self) -> None:
+        if self._embedder is not None:
+            return
+        try:
+            from sentence_transformers import SentenceTransformer
+            self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
+            logger.info("Interpreter: loaded bi-encoder (all-MiniLM-L6-v2)")
+            self._precache_category_embeddings()
+        except ImportError:
+            logger.warning("sentence-transformers not available")
+
+    def _ensure_nli(self) -> None:
+        if self._nli_model is not None:
+            return
+        try:
+            from sentence_transformers import CrossEncoder
+            self._nli_model = CrossEncoder("cross-encoder/nli-deberta-v3-small")
+            logger.info("Interpreter: loaded NLI cross-encoder")
+        except Exception as e:
+            logger.warning(f"NLI model unavailable: {e}")
+
+    def _precache_category_embeddings(self) -> None:
+        """Embed category labels for retrieval."""
+        if self._embedder is None:
+            return
+        labels = [CATEGORY_LABELS[cat] for cat in LAYER_CATEGORIES]
+        embeddings = self._embedder.encode(labels)
+        for cat, emb in zip(LAYER_CATEGORIES, embeddings):
+            self._category_embeddings[cat] = emb
+
+    def _classify_direction_nli(
+        self, clause: str, category: str
+    ) -> Tuple[float, float]:
+        """
+        Use NLI cross-encoder to determine direction for a category.
+
+        Tests both enhance and suppress hypotheses, picks whichever
