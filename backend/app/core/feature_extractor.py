@@ -454,3 +454,59 @@ class FeatureExtractor:
 
     # â”€â”€ Step 4: Storage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+    def _init_db(self, db_path: Path) -> sqlite3.Connection:
+        """Initialize SQLite database for feature storage."""
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS features (
+                feature_id TEXT PRIMARY KEY,
+                model_name TEXT NOT NULL,
+                layer_idx INTEGER NOT NULL,
+                component_idx INTEGER NOT NULL,
+                label TEXT DEFAULT '',
+                variance_explained REAL NOT NULL,
+                vector_path TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_features_model
+            ON features(model_name)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_features_layer
+            ON features(model_name, layer_idx)
+        """)
+        conn.commit()
+        return conn
+
+    def _save_feature(
+        self,
+        conn: sqlite3.Connection,
+        feature: Feature,
+        vectors_dir: Path,
+    ) -> None:
+        """Save a single feature to DB + numpy file."""
+        vectors_dir.mkdir(parents=True, exist_ok=True)
+        vec_path = vectors_dir / f"{feature.feature_id}.npy"
+        np.save(str(vec_path), feature.vector)
+
+        conn.execute(
+            "INSERT OR REPLACE INTO features "
+            "(feature_id, model_name, layer_idx, component_idx, "
+            "label, variance_explained, vector_path) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                feature.feature_id,
+                feature.model_name,
+                feature.layer_idx,
+                feature.component_idx,
+                feature.label,
+                feature.variance_explained,
+                str(vec_path),
+            ),
+        )
+
+    # â”€â”€ Main Pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
