@@ -1,5 +1,5 @@
 """
-PCA Feature Extraction Pipeline â€” Offline Feature Dictionary.
+PCA Feature Extraction Pipeline — Offline Feature Dictionary.
 
 Replaces static weight scanning (scanner.py) and CAA (vector_calculator.py)
 with mathematically rigorous, data-driven feature discovery.
@@ -42,15 +42,15 @@ from app.core.feature_dataset import (
     get_labeling_prompts,
 )
 
-# â”€â”€ Storage paths â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Storage paths ─────────────────────────────────────────────
 _DATA_DIR = Path(__file__).parent.parent / "data"
 _FEATURES_DB = _DATA_DIR / "features.db"
 _VECTORS_DIR = _DATA_DIR / "feature_vectors"
 
 
-# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-# â•‘  DATA CLASSES                                                â•‘
-# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  DATA CLASSES                                                ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 
 @dataclass
@@ -69,9 +69,9 @@ class Feature:
         return torch.from_numpy(self.vector).to(device=device, dtype=dtype)
 
 
-# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-# â•‘  FEATURE DICTIONARY â€” Runtime Lookup                         â•‘
-# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  FEATURE DICTIONARY — Runtime Lookup                         ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 
 class FeatureDictionary:
@@ -185,9 +185,9 @@ class FeatureDictionary:
         ]
 
 
-# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-# â•‘  FEATURE EXTRACTOR â€” Offline Pipeline                        â•‘
-# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  FEATURE EXTRACTOR — Offline Pipeline                        ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 
 class FeatureExtractor:
@@ -225,11 +225,11 @@ class FeatureExtractor:
                 logger.info("Loaded sentence embedder for auto-labeling")
             except ImportError:
                 logger.warning(
-                    "sentence-transformers not available â€” "
+                    "sentence-transformers not available — "
                     "auto-labeling will be skipped"
                 )
 
-    # â”€â”€ Step 1: Activation Collection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Step 1: Activation Collection ─────────────────────────
 
     @torch.no_grad()
     def _collect_activations(
@@ -244,7 +244,7 @@ class FeatureExtractor:
         Run prompts through the model and collect residual stream
         activations at each layer.
 
-        Returns: dict mapping layer_idx â†’ tensor(n_prompts, hidden_dim)
+        Returns: dict mapping layer_idx → tensor(n_prompts, hidden_dim)
         """
         n_layers = len(layer_modules)
         layer_activations: Dict[int, List[torch.Tensor]] = {
@@ -257,7 +257,7 @@ class FeatureExtractor:
             def make_hook(layer_idx: int):
                 def _capture(module, inp, out):
                     h = out[0] if isinstance(out, tuple) else out
-                    # Mean pool across sequence dimension â†’ (batch, hidden_dim)
+                    # Mean pool across sequence dimension → (batch, hidden_dim)
                     pooled = h.float().mean(dim=1)
                     layer_activations[layer_idx].append(pooled.cpu())
                 return _capture
@@ -300,7 +300,7 @@ class FeatureExtractor:
         )
         return result
 
-    # â”€â”€ Step 2: PCA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Step 2: PCA ───────────────────────────────────────────
 
     def _run_pca(
         self,
@@ -309,9 +309,9 @@ class FeatureExtractor:
         """
         Run PCA on each layer's activations.
 
-        Returns: dict mapping layer_idx â†’ (components, explained_variance)
+        Returns: dict mapping layer_idx → (components, explained_variance)
           components: (top_k, hidden_dim)
-          explained_variance: (top_k,) â€” fraction of variance
+          explained_variance: (top_k,) — fraction of variance
         """
         results = {}
 
@@ -355,7 +355,7 @@ class FeatureExtractor:
         logger.info(f"PCA complete: {len(results)} layers processed")
         return results
 
-    # â”€â”€ Step 3: Auto-Labeling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Step 3: Auto-Labeling ─────────────────────────────────
 
     @torch.no_grad()
     def _auto_label_component(
@@ -449,10 +449,10 @@ class FeatureExtractor:
             return ""  # No confident match
 
         label = BEHAVIORAL_KEYWORDS[best_idx]
-        logger.debug(f"Auto-label: sim={best_sim:.3f} â†’ '{label}'")
+        logger.debug(f"Auto-label: sim={best_sim:.3f} → '{label}'")
         return label
 
-    # â”€â”€ Step 4: Storage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Step 4: Storage ───────────────────────────────────────
 
     def _init_db(self, db_path: Path) -> sqlite3.Connection:
         """Initialize SQLite database for feature storage."""
@@ -508,5 +508,168 @@ class FeatureExtractor:
             ),
         )
 
-    # â”€â”€ Main Pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Main Pipeline ─────────────────────────────────────────
 
+    def extract(
+        self,
+        model: torch.nn.Module,
+        tokenizer: Any,
+        layer_modules: List[torch.nn.Module],
+        model_name: str,
+        device: str = "cpu",
+        db_path: Path = _FEATURES_DB,
+        vectors_dir: Path = _VECTORS_DIR,
+    ) -> FeatureDictionary:
+        """
+        Run the full extraction pipeline.
+
+        1. Collect activations from diverse prompts
+        2. PCA per layer
+        3. Auto-label top components
+        4. Store in SQLite
+        5. Return loaded FeatureDictionary
+        """
+        t0 = time.time()
+        logger.info(f"Starting PCA feature extraction for {model_name}")
+
+        # Prepare embedder for auto-labeling
+        self._ensure_embedder()
+
+        # Step 1: Collect activations
+        prompts = get_diverse_prompts()
+        logger.info(f"Using {len(prompts)} diverse prompts for activation collection")
+
+        activations = self._collect_activations(
+            model, tokenizer, layer_modules, prompts, device
+        )
+
+        # Step 2: PCA
+        pca_results = self._run_pca(activations)
+
+        # Step 3 & 4: Label + Store
+        conn = self._init_db(db_path)
+
+        # Clear old features for this model
+        conn.execute("DELETE FROM features WHERE model_name = ?", (model_name,))
+
+        total_features = 0
+        total_labeled = 0
+
+        for layer_idx, (components, variance) in pca_results.items():
+            for comp_idx in range(len(components)):
+                feature_id = f"L{layer_idx}_PC{comp_idx}"
+                label = ""
+
+                # Auto-label top N components per layer
+                if comp_idx < self.auto_label_top_n and self._embedder is not None:
+                    try:
+                        label = self._auto_label_component(
+                            model, tokenizer,
+                            layer_modules[layer_idx],
+                            components[comp_idx],
+                            device,
+                        )
+                        if label:
+                            total_labeled += 1
+                    except Exception as e:
+                        logger.warning(
+                            f"Auto-label failed for {feature_id}: {e}"
+                        )
+
+                feature = Feature(
+                    feature_id=feature_id,
+                    layer_idx=layer_idx,
+                    component_idx=comp_idx,
+                    vector=components[comp_idx],
+                    label=label if label else feature_id,
+                    variance_explained=float(variance[comp_idx]),
+                    model_name=model_name,
+                )
+                self._save_feature(conn, feature, vectors_dir)
+                total_features += 1
+
+        conn.commit()
+        conn.close()
+
+        elapsed = time.time() - t0
+        logger.info(
+            f"Extraction complete: {total_features} features "
+            f"({total_labeled} auto-labeled) in {elapsed:.1f}s"
+        )
+
+        # Return loaded dictionary
+        return FeatureDictionary.load(model_name, db_path)
+
+
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  CLI ENTRY POINT                                             ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+
+def main():
+    """CLI for running feature extraction."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Extract PCA features from a transformer model"
+    )
+    parser.add_argument(
+        "--model", type=str, default="HuggingFaceTB/SmolLM2-135M",
+        help="HuggingFace model name",
+    )
+    parser.add_argument(
+        "--top-k", type=int, default=20,
+        help="Number of PCA components per layer",
+    )
+    parser.add_argument(
+        "--label-top", type=int, default=5,
+        help="Auto-label top N components per layer",
+    )
+    parser.add_argument(
+        "--device", type=str, default="auto",
+        help="Device: auto, cuda, cpu, mps",
+    )
+    parser.add_argument(
+        "--no-label", action="store_true",
+        help="Skip auto-labeling (faster)",
+    )
+    args = parser.parse_args()
+
+    # Load model
+    from app.core.loader import ModelManager
+
+    mm = ModelManager.get_instance()
+    mm.load(
+        model_name=args.model,
+        device_preference=args.device,
+        quantize=False,
+    )
+
+    extractor = FeatureExtractor(
+        top_k=args.top_k,
+        auto_label_top_n=0 if args.no_label else args.label_top,
+    )
+
+    feature_dict = extractor.extract(
+        model=mm.model,
+        tokenizer=mm.tokenizer,
+        layer_modules=mm.get_layer_modules(),
+        model_name=args.model,
+        device=mm.device,
+    )
+
+    print(f"\nExtracted {len(feature_dict.all_features)} features")
+    print(f"Labeled: {len(feature_dict.get_labeled())}")
+    print(f"Layers: {feature_dict.layer_count}")
+
+    # Show top features
+    print("\n── Top labeled features ────────────────────")
+    for f in feature_dict.get_labeled()[:20]:
+        print(
+            f"  {f.feature_id:12s} | {f.label:20s} | "
+            f"var={f.variance_explained:.4f}"
+        )
+
+
+if __name__ == "__main__":
+    main()
