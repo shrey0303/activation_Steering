@@ -252,3 +252,150 @@ def _background_load(model_name: str, device: str, quantize: bool, quantization_
             _load_state["progress"] = ""
 
 
+@router.post("/api/v1/models/load", tags=["Models"])
+async def load_model_endpoint(body: LoadModelRequest, request: Request):
+    """Kick off model loading in background. Returns immediately."""
+    global _load_state
+
+    with _load_lock:
+        if _load_state["status"] == "loading":
+            return {
+                "status": "loading",
+                "message": f"Already loading {_load_state['model_name']}...",
+            }
+
+    # Start background thread
+    thread = threading.Thread(
+        target=_background_load,
+        args=(body.model_name, body.device, body.quantize, body.quantization_bits, request.app.state),
+        daemon=True,
+    )
+    thread.start()
+
+    return {
+        "status": "loading",
+        "message": f"Loading {body.model_name} in background...",
+    }
+
+
+@router.get("/api/v1/models/load-status", tags=["Models"])
+async def load_model_status():
+    """Poll this endpoint to check model loading progress."""
+    with _load_lock:
+        state = dict(_load_state)
+
+    if state["status"] == "done":
+        mm = ModelManager.get_instance()
+        state["model"] = {
+            "id": mm.model_name.split("/")[-1].lower(),
+            "name": mm.model_name,
+            "loaded": True,
+            "parameters": f"{mm.memory_mb / 500:.1f}B (est.)",
+            "quantized": mm.quantized,
+            "quantization_bits": mm.quantization_bits,
+            "memory_mb": mm.memory_mb,
+            "device": mm.device_name,
+            "num_layers": mm.num_layers,
+            "hidden_dim": mm.hidden_dim,
+        }
+        # Reset state for next load
+        _load_state["status"] = "idle"
+
+    return state
+
+
+@router.post("/api/v1/models/unload", tags=["Models"])
+async def unload_model():
+    """Unload the currently loaded model to free memory."""
+    mm = ModelManager.get_instance()
+    if not mm.loaded:
+        raise HTTPException(status_code=400, detail="No model is currently loaded")
+    name = mm.model_name
+    # Clean up steering hooks before unloading the model
+    SteeringEngine.reset_instance()
+    await asyncio.to_thread(mm.unload)
+    return {"success": True, "message": f"Model {name} unloaded"}
+
+
+
+
+@router.post("/api/v1/scan", response_model=ScanResponse, tags=["Analysis"])
+async def scan_model(body: ScanRequest, request: Request):
+    """
+    Mathematically profile all layers of the loaded model.
+    Results are cached in SQLite â€“ subsequent calls return instantly.
+    """
+    mm = _require_model_loaded()
+    db = request.app.state.db
+
+    scanner = LayerScanner(mm)
+    current_hash = scanner.get_scan_hash()
+
+    # Check cache
+    if not body.force_rescan:
+        profile = await db.get_model_profile(mm.model_name)
+        if profile and profile.get("scan_hash") == current_hash:
+            logger.info("Returning cached scan results")
+            mappings = await db.get_layer_mappings(mm.model_name)
+            return ScanResponse(
+                model_name=mm.model_name,
+                num_layers=mm.num_layers,
+                hidden_dim=mm.hidden_dim,
+                architecture=mm.architecture,
+                layer_profiles=[
+                    LayerProfile(
+                        layer_index=m["layer_index"],
+                        category=m["category"],
+                        confidence=m["confidence"],
+                        behavioral_role=m.get("behavioral_role", ""),
+                        weight_stats=m.get("weight_stats", {}),
+                        description=m.get("description", ""),
+                    )
+                    for m in mappings
+                ],
+                scan_time_ms=0.0,
+                from_cache=True,
+            )
+
+    # Perform scan (CPU-bound â†’ thread pool with timeout)
+    t0 = time.perf_counter()
+    try:
+        profiles = await asyncio.wait_for(
+            asyncio.to_thread(scanner.scan),
+            timeout=_SCAN_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail=f"Scan timed out after {_SCAN_TIMEOUT}s")
+    except Exception as e:
+        logger.error(f"Scan failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    # Save to SQLite
+    profile_id = await db.save_model_profile(
+        model_name=mm.model_name,
+        architecture=mm.architecture,
+        num_layers=mm.num_layers,
+        hidden_dim=mm.hidden_dim,
+        scan_hash=current_hash,
+    )
+    await db.save_layer_mappings(profile_id, profiles)
+
+    return ScanResponse(
+        model_name=mm.model_name,
+        num_layers=mm.num_layers,
+        hidden_dim=mm.hidden_dim,
+        architecture=mm.architecture,
+        layer_profiles=[
+            LayerProfile(**{k: v for k, v in p.items()})
+            for p in profiles
+        ],
+        scan_time_ms=round(elapsed_ms, 1),
+        from_cache=False,
+    )
+
+
+# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+# â•‘  4. ANALYZE (Prompt + Expected Response â†’ Layers)           â•‘
+# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
