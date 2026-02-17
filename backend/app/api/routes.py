@@ -543,3 +543,98 @@ async def analyze(body: AnalyzeRequest, request: Request):
 
 
 
+@router.post("/api/v1/generate", response_model=GenerateResponse, tags=["Generation"])
+async def generate(body: GenerateRequest, request: Request):
+    """Generate text with optional steering intervention."""
+    mm = _require_model_loaded()
+    engine = SteeringEngine.get_instance(mm)
+
+    # Apply steering if configured
+    if body.steering:
+        import torch as _torch
+        direction_vec = None
+        if body.steering.direction_vector:
+            direction_vec = _torch.tensor(
+                body.steering.direction_vector, dtype=_torch.float32
+            )
+        engine.add_intervention(
+            layer_idx=body.steering.layer,
+            strength=body.steering.strength,
+            direction_vector=direction_vec,
+        )
+
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                engine.generate,
+                prompt=body.prompt,
+                max_tokens=body.max_tokens,
+                temperature=body.temperature,
+                top_p=body.top_p,
+            ),
+            timeout=_GENERATE_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        engine.clear_interventions()
+        raise HTTPException(status_code=504, detail=f"Generation timed out after {_GENERATE_TIMEOUT}s")
+    # NOTE: Do NOT clear interventions here â€” they must persist
+    # so the export endpoint can pull direction vectors from active hooks.
+
+    _monitor.update_generation_metrics(
+        result["latency_ms"], result["tokens_per_sec"]
+    )
+
+    return GenerateResponse(
+        text=result["text"],
+        prompt=result["prompt"],
+        tokens_generated=result["tokens_generated"],
+        latency_ms=result["latency_ms"],
+        tokens_per_sec=result["tokens_per_sec"],
+        steering_applied=result["steering_applied"],
+        steering_overhead_ms=result["steering_overhead_ms"],
+        metrics={"interventions": result.get("interventions", [])},
+    )
+
+
+# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+# â•‘  6. CAPTURE ACTIVATIONS (for heatmap)                       â•‘
+# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+@router.post(
+    "/api/v1/activations",
+    response_model=ActivationsResponse,
+    tags=["Visualization"],
+)
+async def capture_activations(body: ActivationsRequest, request: Request):
+    """Capture per-layer activation values for the heatmap display."""
+    mm = _require_model_loaded()
+    engine = SteeringEngine.get_instance(mm)
+
+    t0 = time.perf_counter()
+    activations = await asyncio.to_thread(
+        engine.capture_activations,
+        prompt=body.prompt,
+        layers=body.layers,
+        aggregation=body.aggregation,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    return ActivationsResponse(
+        activations=activations,
+        prompt=body.prompt,
+        num_layers=mm.num_layers,
+        capture_time_ms=round(elapsed_ms, 1),
+    )
+
+
+# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+# â•‘  7. PATCH EXPORT                                            â•‘
+# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+@router.post(
+    "/api/v1/patches/export",
+    response_model=PatchExportResponse,
+    tags=["Patches"],
+)
+async def export_patch(body: PatchExportRequest, request: Request):
+    """Export a validated intervention as a deployable JSON configuration."""
