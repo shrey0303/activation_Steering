@@ -62,7 +62,7 @@ _interpreter = ResponseInterpreter()
 _vector_calc = VectorCalculator(max_prompts=20)
 _feature_dict: FeatureDictionary | None = None
 
-# â”€â”€ Analysis cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Analysis cache ────────────────────────────────────────────
 # Stores the last behavior description from analyze so export can
 # pick the semantically closest CAA concept instead of guessing.
 _last_analysis: Dict[str, Any] = {}
@@ -82,7 +82,7 @@ def _match_behavior_to_concept(behavior: str) -> str:
 
     behavior_lower = behavior.lower()
 
-    # Direct keyword mapping â€” fast path
+    # Direct keyword mapping — fast path
     KEYWORD_MAP = {
         "polite": "politeness", "rude": "politeness", "courteous": "politeness",
         "honest": "politeness", "kind": "politeness", "respectful": "politeness",
@@ -101,7 +101,7 @@ def _match_behavior_to_concept(behavior: str) -> str:
     for keyword, concept in KEYWORD_MAP.items():
         if keyword in behavior_lower:
             _best_concept_cache[behavior] = concept
-            logger.info(f"Matched behavior '{behavior}' â†’ concept '{concept}' (keyword: {keyword})")
+            logger.info(f"Matched behavior '{behavior}' → concept '{concept}' (keyword: {keyword})")
             return concept
 
     # Fallback: try available concepts from VectorCalculator
@@ -323,7 +323,7 @@ async def unload_model():
 async def scan_model(body: ScanRequest, request: Request):
     """
     Mathematically profile all layers of the loaded model.
-    Results are cached in SQLite â€“ subsequent calls return instantly.
+    Results are cached in SQLite – subsequent calls return instantly.
     """
     mm = _require_model_loaded()
     db = request.app.state.db
@@ -357,7 +357,7 @@ async def scan_model(body: ScanRequest, request: Request):
                 from_cache=True,
             )
 
-    # Perform scan (CPU-bound â†’ thread pool with timeout)
+    # Perform scan (CPU-bound → thread pool with timeout)
     t0 = time.perf_counter()
     try:
         profiles = await asyncio.wait_for(
@@ -395,9 +395,9 @@ async def scan_model(body: ScanRequest, request: Request):
     )
 
 
-# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-# â•‘  4. ANALYZE (Prompt + Expected Response â†’ Layers)           â•‘
-# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  4. ANALYZE (Prompt + Expected Response → Layers)           ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 @router.post("/api/v1/analyze", response_model=AnalyzeResponse, tags=["Analysis"])
 async def analyze(body: AnalyzeRequest, request: Request):
@@ -466,7 +466,7 @@ async def analyze(body: AnalyzeRequest, request: Request):
         _last_analysis["behavior"] = behavior_text
         _last_analysis["layers"] = {r.layer_index: r.category for r in resolved}
         _last_analysis["timestamp"] = time.time()
-        _last_analysis["vectors"] = {}  # layer_index â†’ direction_vector (list)
+        _last_analysis["vectors"] = {}  # layer_index → direction_vector (list)
 
         # Pre-compute direction vectors for each detected layer
         concept = _match_behavior_to_concept(behavior_text)
@@ -483,14 +483,14 @@ async def analyze(body: AnalyzeRequest, request: Request):
                 if dv is not None:
                     _last_analysis["vectors"][r.layer_index] = dv
                     logger.info(
-                        f"  âœ… Layer {r.layer_index}: direction vector computed "
+                        f"  ✅ Layer {r.layer_index}: direction vector computed "
                         f"(dim={len(dv) if isinstance(dv, list) else 'tensor'})"
                     )
             except Exception as e:
-                logger.warning(f"  âš  Layer {r.layer_index}: vector computation failed: {e}")
+                logger.warning(f"  ⚠ Layer {r.layer_index}: vector computation failed: {e}")
 
         logger.info(
-            f"Cached analysis: '{behavior_text}' â†’ {len(_last_analysis['vectors'])} "
+            f"Cached analysis: '{behavior_text}' → {len(_last_analysis['vectors'])} "
             f"vectors pre-computed"
         )
 
@@ -577,7 +577,7 @@ async def generate(body: GenerateRequest, request: Request):
     except asyncio.TimeoutError:
         engine.clear_interventions()
         raise HTTPException(status_code=504, detail=f"Generation timed out after {_GENERATE_TIMEOUT}s")
-    # NOTE: Do NOT clear interventions here â€” they must persist
+    # NOTE: Do NOT clear interventions here — they must persist
     # so the export endpoint can pull direction vectors from active hooks.
 
     _monitor.update_generation_metrics(
@@ -596,9 +596,9 @@ async def generate(body: GenerateRequest, request: Request):
     )
 
 
-# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-# â•‘  6. CAPTURE ACTIVATIONS (for heatmap)                       â•‘
-# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  6. CAPTURE ACTIVATIONS (for heatmap)                       ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 @router.post(
     "/api/v1/activations",
@@ -627,9 +627,9 @@ async def capture_activations(body: ActivationsRequest, request: Request):
     )
 
 
-# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-# â•‘  7. PATCH EXPORT                                            â•‘
-# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  7. PATCH EXPORT                                            ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 @router.post(
     "/api/v1/patches/export",
@@ -644,8 +644,8 @@ async def export_patch(body: PatchExportRequest, request: Request):
 
     patch_id = str(uuid4())
 
-    # â”€â”€ Auto-compute direction vectors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    # Map layer categories â†’ best CAA concept for vector computation
+    # ── Auto-compute direction vectors ─────────────────────────
+    # Map layer categories → best CAA concept for vector computation
     CATEGORY_TO_CONCEPT = {
         "style_personality": "politeness",
         "safety_alignment": "toxicity",
@@ -670,7 +670,7 @@ async def export_patch(body: PatchExportRequest, request: Request):
         direction_vector = i.direction_vector
 
         if direction_vector is None:
-            # â”€â”€ Strategy 0: Pull from analyze cache (INSTANT) â”€â”€
+            # ── Strategy 0: Pull from analyze cache (INSTANT) ──
             # The analyze endpoint pre-computes vectors for all
             # recommended layers. This is the primary path.
             cached_vectors = _last_analysis.get("vectors", {})
@@ -682,7 +682,7 @@ async def export_patch(body: PatchExportRequest, request: Request):
                 )
 
         if direction_vector is None:
-            # â”€â”€ Strategy 1: Pull from active steering hooks â”€â”€â”€â”€
+            # ── Strategy 1: Pull from active steering hooks ────
             # If the user steered with a custom vector, grab it.
             try:
                 engine = SteeringEngine.get_instance(mm)
@@ -704,7 +704,7 @@ async def export_patch(body: PatchExportRequest, request: Request):
             except Exception as e:
                 logger.debug(f"Could not pull vector from hooks: {e}")
 
-        # â”€â”€ Strategy 2: CAA auto-compute (LAST RESORT) â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Strategy 2: CAA auto-compute (LAST RESORT) ────────
         # Only runs if analyze was never called and no hooks exist.
         if direction_vector is None and mm.loaded and mm.model is not None:
             # Use cached behavior from last analyze call for concept matching
@@ -781,9 +781,9 @@ async def export_patch(body: PatchExportRequest, request: Request):
     )
 
 
-# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-# â•‘  7b. CONCEPT STEERING VECTORS (CAA)                         â•‘
-# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  7b. CONCEPT STEERING VECTORS (CAA)                         ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 @router.get("/api/v1/concepts", tags=["Concepts"])
 async def list_concepts():
@@ -842,9 +842,9 @@ async def compute_concept_vector(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-# â•‘  7c. EVALUATION (BEFORE / AFTER COMPARISON)                 â•‘
-# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  7c. EVALUATION (BEFORE / AFTER COMPARISON)                 ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 @router.post("/api/v1/evaluate", tags=["Evaluation"])
 async def evaluate_steering(request: Request):
@@ -904,9 +904,9 @@ async def evaluate_steering(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-# â•‘  8. LIST & GET PATCHES                                      â•‘
-# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  8. LIST & GET PATCHES                                      ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 @router.get("/api/v1/patches", response_model=PatchListResponse, tags=["Patches"])
 async def list_patches(request: Request):
@@ -953,7 +953,7 @@ async def download_patch(patch_id: str, request: Request):
     patch_name = patch.get("name", patch_id[:8])
     filename = f"steerops_patch_{patch_name}.json"
 
-    # Write to temp file for download â€” use background cleanup
+    # Write to temp file for download — use background cleanup
     import atexit
     tmp_path = os.path.join(tempfile.gettempdir(), f"steerops_{patch_id}.json")
     with open(tmp_path, "w", encoding="utf-8") as f:
@@ -968,9 +968,9 @@ async def download_patch(patch_id: str, request: Request):
     )
 
 
-# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-# â•‘  9. SYSTEM METRICS                                          â•‘
-# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  9. SYSTEM METRICS                                          ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 @router.get("/api/v1/metrics", tags=["System"])
 async def get_metrics():
@@ -978,10 +978,257 @@ async def get_metrics():
     return _monitor.get_metrics()
 
 
-# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-# â•‘  10. REMOTE MODEL (HuggingFace Inference API)               â•‘
-# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  10. REMOTE MODEL (HuggingFace Inference API)               ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 from app.core.remote_model import RemoteModelManager
 
+
+@router.post("/api/v1/models/remote-connect", tags=["Remote"])
+async def remote_connect_model(request: Request):
+    """Connect to a remote model via HuggingFace Hub (no download)."""
+    body = await request.json()
+    model_name = body.get("model_name", "").strip()
+    hf_token = body.get("hf_token", None)
+
+    if not model_name:
+        raise HTTPException(status_code=400, detail="model_name is required")
+
+    rmm = RemoteModelManager.get_instance()
+    try:
+        info = await asyncio.to_thread(rmm.connect, model_name, hf_token)
+        return {"status": "connected", "model": info}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/v1/models/remote-disconnect", tags=["Remote"])
+async def remote_disconnect():
+    """Disconnect from remote model."""
+    rmm = RemoteModelManager.get_instance()
+    rmm.disconnect()
+    return {"status": "disconnected"}
+
+
+@router.post("/api/v1/remote/scan", tags=["Remote"])
+async def remote_scan():
+    """Scan a remote model using config metadata (no weights)."""
+    rmm = RemoteModelManager.get_instance()
+    if not rmm.loaded:
+        raise HTTPException(status_code=400, detail="No remote model connected")
+
+    try:
+        result = await asyncio.to_thread(rmm.remote_scan)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/v1/remote/generate", tags=["Remote"])
+async def remote_generate(request: Request):
+    """Generate text using HuggingFace Inference API."""
+    rmm = RemoteModelManager.get_instance()
+    if not rmm.loaded:
+        raise HTTPException(status_code=400, detail="No remote model connected")
+
+    body = await request.json()
+    prompt = body.get("prompt", "")
+    max_tokens = body.get("max_tokens", 200)
+    temperature = body.get("temperature", 0.7)
+
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(rmm.generate, prompt, max_tokens, temperature),
+            timeout=_GENERATE_TIMEOUT,
+        )
+        return result
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Remote generation timed out")
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/v1/remote/activations", tags=["Remote"])
+async def remote_activations(request: Request):
+    """Simulated activations for a prompt (heuristic-based)."""
+    rmm = RemoteModelManager.get_instance()
+    if not rmm.loaded:
+        raise HTTPException(status_code=400, detail="No remote model connected")
+
+    body = await request.json()
+    prompt = body.get("prompt", "")
+
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+
+    activations = await asyncio.to_thread(rmm.simulate_activations, prompt)
+    return {"activations": activations, "remote": True, "estimated": True}
+
+
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  FEATURE DICTIONARY (PCA-based — Phase 1)                   ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+
+@router.post("/api/v1/features/extract", tags=["Features"])
+async def extract_features(request: Request):
+    """
+    Run offline PCA feature extraction on the loaded model.
+
+    This is a heavy operation (~30-60s on CPU, ~5s on GPU).
+    Results are cached in SQLite — subsequent calls are instant.
+    """
+    global _feature_dict
+
+    mm = _require_model_loaded()
+    body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+
+    top_k = body.get("top_k", 20)
+    label_top = body.get("label_top_n", 5)
+    no_label = body.get("no_label", False)
+
+    extractor = FeatureExtractor(
+        top_k=top_k,
+        auto_label_top_n=0 if no_label else label_top,
+    )
+
+    try:
+        t0 = time.time()
+        _feature_dict = await asyncio.wait_for(
+            asyncio.to_thread(
+                extractor.extract,
+                model=mm.model,
+                tokenizer=mm.tokenizer,
+                layer_modules=mm.get_layer_modules(),
+                model_name=mm.model_name,
+                device=mm.device,
+            ),
+            timeout=300,  # PCA extraction can be very slow
+        )
+        elapsed = time.time() - t0
+
+        return {
+            "status": "success",
+            "total_features": len(_feature_dict.all_features),
+            "labeled_features": len(_feature_dict.get_labeled()),
+            "layers": _feature_dict.layer_count,
+            "extraction_time_seconds": round(elapsed, 1),
+        }
+    except Exception as e:
+        logger.error(f"Feature extraction failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/v1/features", tags=["Features"])
+async def list_features(request: Request):
+    """List all extracted features for the loaded model."""
+    global _feature_dict
+
+    mm = _require_model_loaded()
+
+    # Load dict if not already in memory
+    if _feature_dict is None:
+        _feature_dict = FeatureDictionary.load(mm.model_name)
+
+    layer_filter = request.query_params.get("layer")
+    label_filter = request.query_params.get("label")
+    search_query = request.query_params.get("search")
+
+    features = _feature_dict.all_features
+
+    if layer_filter is not None:
+        features = _feature_dict.get_by_layer(int(layer_filter))
+    elif label_filter:
+        features = _feature_dict.get_by_label(label_filter)
+    elif search_query:
+        features = _feature_dict.search(search_query)
+
+    return {
+        "features": [
+            {
+                "feature_id": f.feature_id,
+                "layer_idx": f.layer_idx,
+                "component_idx": f.component_idx,
+                "label": f.label,
+                "variance_explained": round(f.variance_explained, 6),
+            }
+            for f in features
+        ],
+        "total": len(features),
+        "available_labels": _feature_dict.all_labels,
+    }
+
+
+@router.get("/api/v1/features/{feature_id}", tags=["Features"])
+async def get_feature(feature_id: str, request: Request):
+    """Get a specific feature with its vector."""
+    global _feature_dict
+
+    mm = _require_model_loaded()
+
+    if _feature_dict is None:
+        _feature_dict = FeatureDictionary.load(mm.model_name)
+
+    feature = _feature_dict.get(feature_id)
+    if feature is None:
+        raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
+
+    return {
+        "feature_id": feature.feature_id,
+        "layer_idx": feature.layer_idx,
+        "component_idx": feature.component_idx,
+        "label": feature.label,
+        "variance_explained": round(feature.variance_explained, 6),
+        "vector": feature.vector.tolist(),
+        "vector_dim": len(feature.vector),
+    }
+
+
+@router.put("/api/v1/features/{feature_id}/label", tags=["Features"])
+async def update_feature_label(feature_id: str, request: Request):
+    """Update a feature's label (Discovery Dashboard)."""
+    global _feature_dict
+
+    mm = _require_model_loaded()
+
+    if _feature_dict is None:
+        _feature_dict = FeatureDictionary.load(mm.model_name)
+
+    feature = _feature_dict.get(feature_id)
+    if feature is None:
+        raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
+
+    body = await request.json()
+    new_label = body.get("label", "")
+    if not new_label:
+        raise HTTPException(status_code=400, detail="label is required")
+
+    # Update in-memory
+    feature.label = new_label
+
+    # Update in DB
+    import sqlite3 as _sqlite3
+    from app.core.feature_extractor import _FEATURES_DB
+
+    def _persist_label():
+        if _FEATURES_DB.exists():
+            conn = _sqlite3.connect(str(_FEATURES_DB))
+            conn.execute(
+                "UPDATE features SET label = ? WHERE feature_id = ? AND model_name = ?",
+                (new_label, feature_id, mm.model_name),
+            )
+            conn.commit()
+            conn.close()
+
+    await asyncio.to_thread(_persist_label)
+
+    return {"status": "updated", "feature_id": feature_id, "label": new_label}
 
