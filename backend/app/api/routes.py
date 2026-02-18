@@ -638,3 +638,150 @@ async def capture_activations(body: ActivationsRequest, request: Request):
 )
 async def export_patch(body: PatchExportRequest, request: Request):
     """Export a validated intervention as a deployable JSON configuration."""
+    mm = ModelManager.get_instance()
+    db = request.app.state.db
+    settings = get_settings()
+
+    patch_id = str(uuid4())
+
+    # â”€â”€ Auto-compute direction vectors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Map layer categories â†’ best CAA concept for vector computation
+    CATEGORY_TO_CONCEPT = {
+        "style_personality": "politeness",
+        "safety_alignment": "toxicity",
+        "reasoning_planning": "refusal",
+        "entity_semantic": "creativity",
+        "information_integration": "verbosity",
+        "knowledge_retrieval": "refusal",
+        "output_distribution": "verbosity",
+        "syntactic_processing": "creativity",
+        "positional_morphological": "creativity",
+        "token_embedding": "verbosity",
+    }
+
+    # Get cached layer mappings to lookup each layer's category
+    layer_category_map = {}
+    if mm.loaded:
+        mappings = await db.get_layer_mappings(mm.model_name)
+        layer_category_map = {m["layer_index"]: m["category"] for m in mappings}
+
+    interventions = []
+    for i in body.interventions:
+        direction_vector = i.direction_vector
+
+        if direction_vector is None:
+            # â”€â”€ Strategy 0: Pull from analyze cache (INSTANT) â”€â”€
+            # The analyze endpoint pre-computes vectors for all
+            # recommended layers. This is the primary path.
+            cached_vectors = _last_analysis.get("vectors", {})
+            if i.layer in cached_vectors:
+                direction_vector = cached_vectors[i.layer]
+                logger.info(
+                    f"Direction vector for layer {i.layer} "
+                    f"retrieved from analyze cache"
+                )
+
+        if direction_vector is None:
+            # â”€â”€ Strategy 1: Pull from active steering hooks â”€â”€â”€â”€
+            # If the user steered with a custom vector, grab it.
+            try:
+                engine = SteeringEngine.get_instance(mm)
+                for hook in engine._hooks.values():
+                    if (
+                        hook.layer_idx == i.layer
+                        and hook.direction_vector is not None
+                    ):
+                        import torch as _torch
+                        dv = hook.direction_vector
+                        if isinstance(dv, _torch.Tensor):
+                            dv = dv.cpu().float().tolist()
+                        direction_vector = dv
+                        logger.info(
+                            f"Direction vector for layer {i.layer} "
+                            f"pulled from active hook"
+                        )
+                        break
+            except Exception as e:
+                logger.debug(f"Could not pull vector from hooks: {e}")
+
+        # â”€â”€ Strategy 2: CAA auto-compute (LAST RESORT) â”€â”€â”€â”€â”€â”€â”€â”€
+        # Only runs if analyze was never called and no hooks exist.
+        if direction_vector is None and mm.loaded and mm.model is not None:
+            # Use cached behavior from last analyze call for concept matching
+            behavior = _last_analysis.get("behavior", "")
+            if behavior:
+                concept = _match_behavior_to_concept(behavior)
+            else:
+                # Fallback to category-based mapping if no analyze was done
+                category = layer_category_map.get(i.layer, "unknown")
+                concept = CATEGORY_TO_CONCEPT.get(category, "politeness")
+            try:
+                result = _vector_calc.compute_vector(
+                    mm.model, mm.tokenizer, concept, i.layer
+                )
+                direction_vector = result.get("direction_vector")
+                logger.info(
+                    f"Auto-computed CAA direction vector for layer {i.layer} "
+                    f"(concept={concept}, behavior='{behavior}')"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Could not auto-compute vector for layer {i.layer}: {e}. "
+                    f"Patch will be saved without direction vector for this layer."
+                )
+
+        interventions.append({
+            "layer": i.layer,
+            "strength": i.strength,
+            "direction_vector": direction_vector,
+            "notes": i.notes,
+        })
+
+    patch_data = {
+        "metadata": {
+            "name": body.patch_name,
+            "version": "1.0",
+            "model": mm.model_name if mm.loaded else "",
+            "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "creator": "SteerOps",
+            "description": body.description,
+        },
+        "interventions": interventions,
+        "validation": body.validation_data,
+        "deployment_instructions": (
+            "Load this JSON at model startup and register forward hooks "
+            "for each intervention layer."
+        ),
+    }
+
+    # Save to SQLite
+    await db.save_patch(
+        patch_id=patch_id,
+        name=body.patch_name,
+        model_name=mm.model_name if mm.loaded else "",
+        description=body.description,
+        patch_data=patch_data,
+    )
+
+    # Also write to filesystem
+    os.makedirs(settings.patches_dir, exist_ok=True)
+    patch_path = os.path.join(
+        settings.patches_dir, f"patch_{body.patch_name}.json"
+    )
+    with open(patch_path, "w") as f:
+        json.dump(patch_data, f, indent=2)
+
+    file_size_kb = os.path.getsize(patch_path) / 1024
+
+    return PatchExportResponse(
+        patch_id=patch_id,
+        download_url=f"/api/v1/patches/download/{patch_id}",
+        file_size_kb=round(file_size_kb, 2),
+        patch=patch_data,
+    )
+
+
+# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+# â•‘  7b. CONCEPT STEERING VECTORS (CAA)                         â•‘
+# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
