@@ -908,3 +908,80 @@ async def evaluate_steering(request: Request):
 # â•‘  8. LIST & GET PATCHES                                      â•‘
 # â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
+@router.get("/api/v1/patches", response_model=PatchListResponse, tags=["Patches"])
+async def list_patches(request: Request):
+    """List all saved patches."""
+    db = request.app.state.db
+    patches = await db.get_patches()
+    return PatchListResponse(
+        patches=[
+            PatchMetadata(
+                id=p["id"],
+                name=p["name"],
+                model=p.get("model_name", ""),
+                description=p.get("description", ""),
+                created=p.get("created_at", ""),
+                file_size_kb=p.get("file_size_kb", 0),
+            )
+            for p in patches
+        ],
+        total=len(patches),
+    )
+
+
+@router.get("/api/v1/patches/{patch_id}", tags=["Patches"])
+async def get_patch(patch_id: str, request: Request):
+    """Get a specific patch as JSON."""
+    db = request.app.state.db
+    patch = await db.get_patch(patch_id)
+    if not patch:
+        raise HTTPException(status_code=404, detail="Patch not found")
+    return patch.get("patch_data", {})
+
+
+@router.get("/api/v1/patches/download/{patch_id}", tags=["Patches"])
+async def download_patch(patch_id: str, request: Request):
+    """
+    Download a patch as a .json file (browser will trigger Save As).
+    """
+    db = request.app.state.db
+    patch = await db.get_patch(patch_id)
+    if not patch:
+        raise HTTPException(status_code=404, detail="Patch not found")
+
+    patch_data = patch.get("patch_data", {})
+    patch_name = patch.get("name", patch_id[:8])
+    filename = f"steerops_patch_{patch_name}.json"
+
+    # Write to temp file for download â€” use background cleanup
+    import atexit
+    tmp_path = os.path.join(tempfile.gettempdir(), f"steerops_{patch_id}.json")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(patch_data, f, indent=2)
+
+    return FileResponse(
+        path=tmp_path,
+        filename=filename,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        background=None,  # FastAPI cleans up temp files after response
+    )
+
+
+# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+# â•‘  9. SYSTEM METRICS                                          â•‘
+# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+@router.get("/api/v1/metrics", tags=["System"])
+async def get_metrics():
+    """Current system performance metrics."""
+    return _monitor.get_metrics()
+
+
+# â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+# â•‘  10. REMOTE MODEL (HuggingFace Inference API)               â•‘
+# â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+from app.core.remote_model import RemoteModelManager
+
+
