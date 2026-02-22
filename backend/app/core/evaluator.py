@@ -376,3 +376,47 @@ class Evaluator:
     # â•‘  Sentiment heuristic                                   â•‘
     # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
+    @staticmethod
+    def _simple_sentiment(text: str) -> float:
+        """Return sentiment polarity in [-1, 1] using TextBlob or fallback."""
+        try:
+            from textblob import TextBlob
+            return round(TextBlob(text).sentiment.polarity, 4)
+        except Exception:
+            return 0.0
+
+    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # â•‘  Aggregation                                           â•‘
+    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+    @staticmethod
+    def _aggregate_metrics(all_metrics: List[Dict[str, float]]) -> Dict[str, float]:
+        """Average metrics across all comparisons + compute consistency."""
+        if not all_metrics:
+            return {}
+
+        keys = all_metrics[0].keys()
+        agg: Dict[str, float] = {}
+
+        for key in keys:
+            values = [m.get(key, 0.0) for m in all_metrics]
+            agg[f"avg_{key}"] = round(sum(values) / len(values), 4)
+
+            # Standard deviation for consistency metrics
+            if len(values) > 1:
+                mean = sum(values) / len(values)
+                variance = sum((v - mean) ** 2 for v in values) / len(values)
+                agg[f"std_{key}"] = round(variance ** 0.5, 4)
+
+        # Behavioral consistency = 1 - std_dev(concept_alignment) if present
+        if "std_steered_concept_alignment" in agg:
+            std = agg["std_steered_concept_alignment"]
+            agg["behavioral_consistency"] = round(max(0, 1.0 - std * 5), 4)
+
+        return agg
+
+    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # â•‘  Overall score (0-100)                                 â•‘
+    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+    @staticmethod
