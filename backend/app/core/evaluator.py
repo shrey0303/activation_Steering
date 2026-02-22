@@ -314,3 +314,65 @@ class Evaluator:
     # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @staticmethod
+    def _compute_perplexity(model: Any, tokenizer: Any, text: str) -> float:
+        """Compute model's own perplexity on a text."""
+        try:
+            inputs = tokenizer(
+                text, return_tensors="pt", truncation=True, max_length=512
+            )
+            device = next(model.parameters()).device
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+
+            with torch.no_grad():
+                outputs = model(**inputs, labels=inputs["input_ids"])
+                loss = outputs.loss.item()
+
+            return round(math.exp(min(loss, 20)), 2)  # Cap at e^20
+        except Exception:
+            return 0.0
+
+    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # â•‘  Concept anchors for alignment scoring                 â•‘
+    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+    @staticmethod
+    def _get_concept_anchors(concept: str) -> List[str]:
+        """Return short anchor sentences for a steering concept."""
+        anchors = {
+            "politeness": [
+                "Thank you for your question, I'd be happy to help.",
+                "I appreciate your patience. Let me explain clearly.",
+                "That's a great observation. Here's what I think.",
+                "I understand your concern and want to address it thoughtfully.",
+            ],
+            "toxicity": [
+                "I won't engage with harmful language or hate speech.",
+                "Let me provide a safe and constructive response.",
+                "I'll address this respectfully while being honest.",
+                "I want to ensure my response is helpful and non-harmful.",
+            ],
+            "creativity": [
+                "Imagine a world where colors could sing and melodies could paint.",
+                "The idea danced at the edge of possibility like twilight.",
+                "Let me weave you a tapestry of unexpected connections.",
+                "Picture this: a garden of thoughts blooming in parallel.",
+            ],
+            "refusal": [
+                "I can't help with that request due to safety concerns.",
+                "I'd prefer to redirect our conversation to safer topics.",
+                "I'm not able to provide that information.",
+                "Let me suggest an alternative approach instead.",
+            ],
+            "verbosity": [
+                "To provide a thorough answer, let me cover several aspects.",
+                "There are multiple dimensions to consider in this question.",
+                "Let me elaborate extensively on each point for clarity.",
+                "A comprehensive analysis requires examining the details.",
+            ],
+        }
+        return anchors.get(concept, [])
+
+    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # â•‘  Sentiment heuristic                                   â•‘
+    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
