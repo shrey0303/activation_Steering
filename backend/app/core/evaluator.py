@@ -158,3 +158,103 @@ class Evaluator:
     # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @staticmethod
+    def _generate(model: Any, tokenizer: Any, prompt: str, max_tokens: int) -> str:
+        """Generate text from the model."""
+        # Apply chat template for instruction-tuned models
+        if hasattr(tokenizer, 'chat_template') and tokenizer.chat_template:
+            try:
+                messages = [{"role": "user", "content": prompt}]
+                formatted = tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+            except Exception:
+                formatted = prompt  # fallback if template fails
+        else:
+            formatted = prompt
+
+        inputs = tokenizer(
+            formatted, return_tensors="pt", truncation=True, max_length=512
+        )
+        device = next(model.parameters()).device
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=max_tokens,
+                do_sample=False,
+                pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+            )
+
+        generated = outputs[0][inputs["input_ids"].shape[1]:]
+        return tokenizer.decode(generated, skip_special_tokens=True)
+
+    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # â•‘  Metrics computation                                   â•‘
+    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+    def _compute_metrics(
+        self,
+        model: Any,
+        tokenizer: Any,
+        prompt: str,
+        baseline: str,
+        steered: str,
+        has_embedder: bool,
+        total_strength: float,
+        target_concept: Optional[str],
+    ) -> Dict[str, float]:
+        """Compute all production-grade metrics."""
+        metrics: Dict[str, float] = {}
+
+        # â”€â”€ 1. Basic metrics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        base_words = baseline.split()
+        steer_words = steered.split()
+        metrics["baseline_length"] = len(base_words)
+        metrics["steered_length"] = len(steer_words)
+        metrics["length_delta"] = len(steer_words) - len(base_words)
+        metrics["length_ratio"] = len(steer_words) / max(len(base_words), 1)
+
+        # Vocabulary overlap (Jaccard)
+        base_set = set(w.lower() for w in base_words)
+        steer_set = set(w.lower() for w in steer_words)
+        union = base_set | steer_set
+        metrics["vocabulary_overlap"] = (
+            len(base_set & steer_set) / max(len(union), 1) if union else 0.0
+        )
+
+        # Token-level divergence â€” most sensitive metric for steering
+        base_tokens = tokenizer.encode(baseline, add_special_tokens=False)
+        steer_tokens = tokenizer.encode(steered, add_special_tokens=False)
+        max_len = max(len(base_tokens), len(steer_tokens))
+        if max_len > 0:
+            # Pad shorter sequence for alignment
+            matched = sum(
+                1 for a, b in zip(base_tokens, steer_tokens) if a == b
+            )
+            metrics["token_match_ratio"] = round(matched / max_len, 4)
+            metrics["token_divergence"] = round(1.0 - matched / max_len, 4)
+        else:
+            metrics["token_match_ratio"] = 1.0
+            metrics["token_divergence"] = 0.0
+
+        # â”€â”€ 2. Semantic Shift (cosine distance) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        if has_embedder and self._embed_model:
+            embeddings = self._embed_model.encode(
+                [baseline, steered], convert_to_tensor=True
+            )
+            cos_sim = torch.nn.functional.cosine_similarity(
+                embeddings[0].unsqueeze(0), embeddings[1].unsqueeze(0)
+            ).item()
+            metrics["semantic_similarity"] = round(cos_sim, 4)
+            metrics["semantic_shift"] = round(1.0 - cos_sim, 4)
+        else:
+            metrics["semantic_similarity"] = 0.0
+            metrics["semantic_shift"] = 0.0
+
+        # â”€â”€ 3. Perplexity Delta â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        base_ppl = self._compute_perplexity(model, tokenizer, prompt + " " + baseline)
+        steer_ppl = self._compute_perplexity(model, tokenizer, prompt + " " + steered)
+        metrics["baseline_perplexity"] = base_ppl
+        metrics["steered_perplexity"] = steer_ppl
+        metrics["perplexity_delta"] = round(steer_ppl - base_ppl, 2)
