@@ -258,3 +258,59 @@ class Evaluator:
         metrics["baseline_perplexity"] = base_ppl
         metrics["steered_perplexity"] = steer_ppl
         metrics["perplexity_delta"] = round(steer_ppl - base_ppl, 2)
+        # Perplexity ratio: < 1 means steered is more fluent
+        metrics["perplexity_ratio"] = round(
+            steer_ppl / max(base_ppl, 1e-6), 4
+        )
+
+        # â”€â”€ 4. Concept Alignment (if target concept given) â”€â”€â”€â”€
+        if has_embedder and self._embed_model and target_concept:
+            concept_anchors = self._get_concept_anchors(target_concept)
+            if concept_anchors:
+                anchor_emb = self._embed_model.encode(
+                    concept_anchors, convert_to_tensor=True
+                )
+                anchor_mean = anchor_emb.mean(dim=0, keepdim=True)
+
+                base_emb = self._embed_model.encode(
+                    [baseline], convert_to_tensor=True
+                )
+                steer_emb = self._embed_model.encode(
+                    [steered], convert_to_tensor=True
+                )
+
+                base_align = torch.nn.functional.cosine_similarity(
+                    base_emb, anchor_mean
+                ).item()
+                steer_align = torch.nn.functional.cosine_similarity(
+                    steer_emb, anchor_mean
+                ).item()
+
+                metrics["baseline_concept_alignment"] = round(base_align, 4)
+                metrics["steered_concept_alignment"] = round(steer_align, 4)
+                metrics["concept_alignment_delta"] = round(
+                    steer_align - base_align, 4
+                )
+
+        # â”€â”€ 5. Steering Efficiency â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        if total_strength > 0 and metrics.get("semantic_shift", 0) > 0:
+            metrics["steering_efficiency"] = round(
+                metrics["semantic_shift"] / total_strength, 4
+            )
+        else:
+            metrics["steering_efficiency"] = 0.0
+
+        # â”€â”€ 6. Sentiment / Tone shift â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        base_sentiment = self._simple_sentiment(baseline)
+        steer_sentiment = self._simple_sentiment(steered)
+        metrics["baseline_sentiment"] = base_sentiment
+        metrics["steered_sentiment"] = steer_sentiment
+        metrics["sentiment_delta"] = round(steer_sentiment - base_sentiment, 4)
+
+        return metrics
+
+    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # â•‘  Perplexity                                            â•‘
+    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+    @staticmethod
