@@ -98,3 +98,86 @@ class VectorCalculator:
             for concept_id, data in pairs.items()
         ]
 
+    def _capture_activations(
+        self,
+        model: torch.nn.Module,
+        tokenizer: Any,
+        prompts: List[str],
+        layer_idx: int,
+    ) -> torch.Tensor:
+        """
+        Run prompts through the model and capture hidden states at
+        the specified layer.
+
+        Returns tensor of shape (num_prompts, hidden_dim).
+        """
+        activations = []
+        hook_handle = None
+        captured = {}
+
+        # Find the target layer module
+        layer_module = self._get_layer_module(model, layer_idx)
+        if layer_module is None:
+            raise ValueError(
+                f"Could not find layer {layer_idx} in model. "
+                f"Check model architecture."
+            )
+
+        def hook_fn(module, input, output):
+            # Output is typically (hidden_states, ...) or just hidden_states
+            if isinstance(output, tuple):
+                hidden = output[0]
+            else:
+                hidden = output
+            # Take the mean across the sequence dimension â†’ (hidden_dim,)
+            captured["activation"] = hidden.detach().mean(dim=1).squeeze(0)
+
+        hook_handle = layer_module.register_forward_hook(hook_fn)
+
+        try:
+            model.eval()
+            with torch.no_grad():
+                for prompt in prompts:
+                    # Apply chat template for instruction-tuned models
+                    if hasattr(tokenizer, 'chat_template') and tokenizer.chat_template:
+                        try:
+                            messages = [{"role": "user", "content": prompt}]
+                            formatted = tokenizer.apply_chat_template(
+                                messages, tokenize=False, add_generation_prompt=True
+                            )
+                        except Exception:
+                            formatted = prompt
+                    else:
+                        formatted = prompt
+
+                    inputs = tokenizer(
+                        formatted,
+                        return_tensors="pt",
+                        truncation=True,
+                        max_length=128,
+                        padding=True,
+                    )
+                    # Move to model's device
+                    device = next(model.parameters()).device
+                    inputs = {
+                        k: v.to(device) for k, v in inputs.items()
+                    }
+
+                    model(**inputs)
+
+                    if "activation" in captured:
+                        activations.append(
+                            captured["activation"].cpu().float()
+                        )
+                        captured.clear()
+        finally:
+            if hook_handle is not None:
+                hook_handle.remove()
+
+        if not activations:
+            raise RuntimeError(
+                f"Failed to capture activations at layer {layer_idx}"
+            )
+
+        return torch.stack(activations)
+
