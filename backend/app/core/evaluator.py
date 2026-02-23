@@ -1,5 +1,5 @@
 """
-Evaluation Pipeline â€” Production-Grade Before/After Comparison.
+Evaluation Pipeline — Production-Grade Before/After Comparison.
 
 Runs test prompts with and without steering to measure actual
 behavioural impact using quantitative metrics:
@@ -36,7 +36,7 @@ class Evaluator:
         self._embed_model = None
         self._embed_ready = False
 
-    # â”€â”€ Lazy-load sentence transformer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Lazy-load sentence transformer ────────────────────────
     def _ensure_embedder(self) -> bool:
         """Load the embedding model once (same one used by interpreter)."""
         if self._embed_ready:
@@ -51,9 +51,9 @@ class Evaluator:
             logger.warning(f"Evaluator: embedding model unavailable: {e}")
             return False
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    # â•‘  Main entry point                                      â•‘
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════
+    # ║  Main entry point                                      ║
+    # ══════════════════════════════════════════════════════════
 
     def evaluate(
         self,
@@ -92,10 +92,10 @@ class Evaluator:
         )
 
         for prompt in test_prompts:
-            # â”€â”€ Baseline (no steering) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Baseline (no steering) ────────────────────────
             baseline_text = self._generate(model, tokenizer, prompt, max_tokens)
 
-            # â”€â”€ Steered output â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Steered output ────────────────────────────────
             try:
                 for cfg in steering_configs:
                     direction_vector = None
@@ -116,7 +116,7 @@ class Evaluator:
             finally:
                 engine.clear_interventions()
 
-            # â”€â”€ Compute metrics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Compute metrics ───────────────────────────────
             metrics = self._compute_metrics(
                 model, tokenizer, prompt,
                 baseline_text, steered_text,
@@ -153,9 +153,9 @@ class Evaluator:
             },
         }
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    # â•‘  Generation                                            â•‘
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════
+    # ║  Generation                                            ║
+    # ══════════════════════════════════════════════════════════
 
     @staticmethod
     def _generate(model: Any, tokenizer: Any, prompt: str, max_tokens: int) -> str:
@@ -189,9 +189,9 @@ class Evaluator:
         generated = outputs[0][inputs["input_ids"].shape[1]:]
         return tokenizer.decode(generated, skip_special_tokens=True)
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    # â•‘  Metrics computation                                   â•‘
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════
+    # ║  Metrics computation                                   ║
+    # ══════════════════════════════════════════════════════════
 
     def _compute_metrics(
         self,
@@ -207,7 +207,7 @@ class Evaluator:
         """Compute all production-grade metrics."""
         metrics: Dict[str, float] = {}
 
-        # â”€â”€ 1. Basic metrics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── 1. Basic metrics ──────────────────────────────────
         base_words = baseline.split()
         steer_words = steered.split()
         metrics["baseline_length"] = len(base_words)
@@ -223,7 +223,7 @@ class Evaluator:
             len(base_set & steer_set) / max(len(union), 1) if union else 0.0
         )
 
-        # Token-level divergence â€” most sensitive metric for steering
+        # Token-level divergence — most sensitive metric for steering
         base_tokens = tokenizer.encode(baseline, add_special_tokens=False)
         steer_tokens = tokenizer.encode(steered, add_special_tokens=False)
         max_len = max(len(base_tokens), len(steer_tokens))
@@ -238,7 +238,7 @@ class Evaluator:
             metrics["token_match_ratio"] = 1.0
             metrics["token_divergence"] = 0.0
 
-        # â”€â”€ 2. Semantic Shift (cosine distance) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── 2. Semantic Shift (cosine distance) ───────────────
         if has_embedder and self._embed_model:
             embeddings = self._embed_model.encode(
                 [baseline, steered], convert_to_tensor=True
@@ -252,7 +252,7 @@ class Evaluator:
             metrics["semantic_similarity"] = 0.0
             metrics["semantic_shift"] = 0.0
 
-        # â”€â”€ 3. Perplexity Delta â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── 3. Perplexity Delta ───────────────────────────────
         base_ppl = self._compute_perplexity(model, tokenizer, prompt + " " + baseline)
         steer_ppl = self._compute_perplexity(model, tokenizer, prompt + " " + steered)
         metrics["baseline_perplexity"] = base_ppl
@@ -263,7 +263,7 @@ class Evaluator:
             steer_ppl / max(base_ppl, 1e-6), 4
         )
 
-        # â”€â”€ 4. Concept Alignment (if target concept given) â”€â”€â”€â”€
+        # ── 4. Concept Alignment (if target concept given) ────
         if has_embedder and self._embed_model and target_concept:
             concept_anchors = self._get_concept_anchors(target_concept)
             if concept_anchors:
@@ -292,7 +292,7 @@ class Evaluator:
                     steer_align - base_align, 4
                 )
 
-        # â”€â”€ 5. Steering Efficiency â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── 5. Steering Efficiency ────────────────────────────
         if total_strength > 0 and metrics.get("semantic_shift", 0) > 0:
             metrics["steering_efficiency"] = round(
                 metrics["semantic_shift"] / total_strength, 4
@@ -300,7 +300,7 @@ class Evaluator:
         else:
             metrics["steering_efficiency"] = 0.0
 
-        # â”€â”€ 6. Sentiment / Tone shift â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── 6. Sentiment / Tone shift ─────────────────────────
         base_sentiment = self._simple_sentiment(baseline)
         steer_sentiment = self._simple_sentiment(steered)
         metrics["baseline_sentiment"] = base_sentiment
@@ -309,9 +309,9 @@ class Evaluator:
 
         return metrics
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    # â•‘  Perplexity                                            â•‘
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════
+    # ║  Perplexity                                            ║
+    # ══════════════════════════════════════════════════════════
 
     @staticmethod
     def _compute_perplexity(model: Any, tokenizer: Any, text: str) -> float:
@@ -331,9 +331,9 @@ class Evaluator:
         except Exception:
             return 0.0
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    # â•‘  Concept anchors for alignment scoring                 â•‘
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════
+    # ║  Concept anchors for alignment scoring                 ║
+    # ══════════════════════════════════════════════════════════
 
     @staticmethod
     def _get_concept_anchors(concept: str) -> List[str]:
@@ -372,9 +372,9 @@ class Evaluator:
         }
         return anchors.get(concept, [])
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    # â•‘  Sentiment heuristic                                   â•‘
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════
+    # ║  Sentiment heuristic                                   ║
+    # ══════════════════════════════════════════════════════════
 
     @staticmethod
     def _simple_sentiment(text: str) -> float:
@@ -385,9 +385,9 @@ class Evaluator:
         except Exception:
             return 0.0
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    # â•‘  Aggregation                                           â•‘
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════
+    # ║  Aggregation                                           ║
+    # ══════════════════════════════════════════════════════════
 
     @staticmethod
     def _aggregate_metrics(all_metrics: List[Dict[str, float]]) -> Dict[str, float]:
@@ -415,8 +415,71 @@ class Evaluator:
 
         return agg
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    # â•‘  Overall score (0-100)                                 â•‘
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════
+    # ║  Overall score (0-100)                                 ║
+    # ══════════════════════════════════════════════════════════
 
     @staticmethod
+    def _compute_overall_score(agg: Dict[str, float]) -> Dict[str, Any]:
+        """
+        Compute a weighted overall steering effectiveness score (0-100).
+
+        Components:
+        - Semantic impact (30%): How much the meaning changed
+        - Fluency preservation (25%): Perplexity didn't explode
+        - Concept alignment (20%): Steered toward target concept
+        - Consistency (15%): Stable behavior across prompts
+        - Efficiency (10%): Impact per unit of strength
+        """
+        scores: Dict[str, float] = {}
+
+        # Semantic impact: shift of 0.3+ is strong, 0.0 is nothing
+        shift = agg.get("avg_semantic_shift", 0)
+        scores["semantic_impact"] = round(min(shift / 0.3, 1.0) * 100, 1)
+
+        # Fluency preservation: perplexity ratio near 1.0 is ideal
+        ratio = agg.get("avg_perplexity_ratio", 1.0)
+        if ratio == 0:
+            ratio = 1.0
+        # Penalize if perplexity increased a lot (ratio >> 1)
+        fluency = max(0, 1.0 - abs(ratio - 1.0) * 0.5)
+        scores["fluency_preservation"] = round(fluency * 100, 1)
+
+        # Concept alignment delta: positive means better alignment
+        align_delta = agg.get("avg_concept_alignment_delta", 0)
+        scores["concept_alignment"] = round(
+            min(max(align_delta + 0.5, 0) / 0.5, 1.0) * 100, 1
+        )
+
+        # Behavioral consistency
+        consistency = agg.get("behavioral_consistency", 0.5)
+        scores["behavioral_consistency"] = round(consistency * 100, 1)
+
+        # Steering efficiency: higher = better (normalize to 0-100)
+        eff = agg.get("avg_steering_efficiency", 0)
+        scores["steering_efficiency"] = round(min(eff / 0.1, 1.0) * 100, 1)
+
+        # Weighted composite
+        weights = {
+            "semantic_impact": 0.30,
+            "fluency_preservation": 0.25,
+            "concept_alignment": 0.20,
+            "behavioral_consistency": 0.15,
+            "steering_efficiency": 0.10,
+        }
+
+        total = sum(scores.get(k, 0) * w for k, w in weights.items())
+
+        return {
+            "score": round(total, 1),
+            "grade": (
+                "A+" if total >= 90 else
+                "A" if total >= 80 else
+                "B+" if total >= 70 else
+                "B" if total >= 60 else
+                "C" if total >= 50 else
+                "D" if total >= 40 else "F"
+            ),
+            "breakdown": scores,
+            "weights": weights,
+        }
