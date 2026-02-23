@@ -1,5 +1,5 @@
 """
-Contrastive Activation Addition (CAA) â€” Vector Calculator.
+Contrastive Activation Addition (CAA) — Vector Calculator.
 
 Computes real steering vectors by:
 1. Running positive prompts through the model and capturing activations
@@ -30,11 +30,11 @@ import torch
 from loguru import logger
 
 
-# â”€â”€ Path to contrastive pairs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Path to contrastive pairs ─────────────────────────────────
 _DATA_DIR = Path(__file__).parent.parent / "data"
 _PAIRS_FILE = _DATA_DIR / "contrastive_pairs.json"
 
-# â”€â”€ Cached vectors directory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Cached vectors directory ──────────────────────────────────
 _VECTORS_DIR = _DATA_DIR / "cached_vectors"
 
 
@@ -43,9 +43,9 @@ class VectorCalculator:
     Compute Contrastive Activation Addition (CAA) steering vectors.
 
     For a given concept (e.g., "politeness") and a target layer:
-      1. Encode N positive prompts â†’ capture hidden states at layer L
-      2. Encode N negative prompts â†’ capture hidden states at layer L
-      3. direction = mean(hâº) - mean(hâ»)
+      1. Encode N positive prompts → capture hidden states at layer L
+      2. Encode N negative prompts → capture hidden states at layer L
+      3. direction = mean(h⁺) - mean(h⁻)
       4. Normalise to unit vector
 
     The resulting vector can be added to activations during inference
@@ -129,7 +129,7 @@ class VectorCalculator:
                 hidden = output[0]
             else:
                 hidden = output
-            # Take the mean across the sequence dimension â†’ (hidden_dim,)
+            # Take the mean across the sequence dimension → (hidden_dim,)
             captured["activation"] = hidden.detach().mean(dim=1).squeeze(0)
 
         hook_handle = layer_module.register_forward_hook(hook_fn)
@@ -245,7 +245,7 @@ class VectorCalculator:
         elapsed = time.perf_counter() - t0
 
         logger.info(
-            f"âœ… CAA vector computed for '{concept}' @ layer {layer_idx} "
+            f"✅ CAA vector computed for '{concept}' @ layer {layer_idx} "
             f"in {elapsed:.2f}s (dim={direction.shape[0]}, norm={float(norm):.4f})"
         )
 
@@ -270,7 +270,7 @@ class VectorCalculator:
         """
         Compute CAA vectors for multiple layers (used during patch export).
 
-        Returns dict mapping layer_idx â†’ direction_vector.
+        Returns dict mapping layer_idx → direction_vector.
         """
         vectors = {}
         for layer_idx in layer_indices:
@@ -286,3 +286,78 @@ class VectorCalculator:
                 vectors[layer_idx] = None
         return vectors
 
+    def cache_vector(
+        self,
+        concept: str,
+        layer_idx: int,
+        model_name: str,
+        vector_data: Dict[str, Any],
+    ) -> Path:
+        """Cache a computed vector to disk for reuse."""
+        _VECTORS_DIR.mkdir(parents=True, exist_ok=True)
+
+        safe_name = model_name.replace("/", "_").replace("\\", "_")
+        filename = f"{safe_name}_{concept}_layer{layer_idx}.json"
+        path = _VECTORS_DIR / filename
+
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(vector_data, f, indent=2)
+
+        logger.info(f"Cached vector: {path}")
+        return path
+
+    def load_cached_vector(
+        self,
+        concept: str,
+        layer_idx: int,
+        model_name: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Load a previously cached vector if available."""
+        safe_name = model_name.replace("/", "_").replace("\\", "_")
+        filename = f"{safe_name}_{concept}_layer{layer_idx}.json"
+        path = _VECTORS_DIR / filename
+
+        if not path.exists():
+            return None
+
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    @staticmethod
+    def _get_layer_module(
+        model: torch.nn.Module, layer_idx: int
+    ) -> Optional[torch.nn.Module]:
+        """
+        Find the transformer layer module by index.
+        Supports common architectures:
+        - GPT-2: model.transformer.h[idx]
+        - LLaMA/Mistral: model.model.layers[idx]
+        - BERT: model.encoder.layer[idx]
+        - GPT-Neo: model.gpt_neox.layers[idx] or model.transformer.h[idx]
+        """
+        # Try common paths
+        paths_to_try = [
+            ("model", "layers"),           # LLaMA, Mistral, Qwen
+            ("transformer", "h"),          # GPT-2, GPT-J
+            ("gpt_neox", "layers"),        # GPT-NeoX
+            ("encoder", "layer"),          # BERT, RoBERTa
+            ("decoder", "layers"),         # T5 decoder
+        ]
+
+        for parent_attr, layers_attr in paths_to_try:
+            parent = getattr(model, parent_attr, None)
+            if parent is not None:
+                layers = getattr(parent, layers_attr, None)
+                if layers is not None and layer_idx < len(layers):
+                    return layers[layer_idx]
+
+        # Fallback: search recursively for a list of modules
+        for name, module in model.named_modules():
+            if hasattr(module, "__len__") and not isinstance(module, str):
+                try:
+                    if layer_idx < len(module):
+                        return module[layer_idx]
+                except (TypeError, IndexError):
+                    continue
+
+        return None
