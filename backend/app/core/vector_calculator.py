@@ -181,3 +181,108 @@ class VectorCalculator:
 
         return torch.stack(activations)
 
+    def compute_vector(
+        self,
+        model: torch.nn.Module,
+        tokenizer: Any,
+        concept: str,
+        layer_idx: int,
+    ) -> Dict[str, Any]:
+        """
+        Compute a CAA steering vector for a concept at a specific layer.
+
+        Parameters
+        ----------
+        model
+            The loaded transformer model.
+        tokenizer
+            The model's tokenizer.
+        concept
+            Concept ID from contrastive_pairs.json (e.g., "politeness").
+        layer_idx
+            Target layer index.
+
+        Returns
+        -------
+        Dict with the computed vector and metadata.
+        """
+        t0 = time.perf_counter()
+
+        pairs = self._load_pairs()
+        if concept not in pairs:
+            raise ValueError(
+                f"Unknown concept '{concept}'. "
+                f"Available: {list(pairs.keys())}"
+            )
+
+        concept_data = pairs[concept]
+        pos_prompts = concept_data["positive"][: self._max_prompts]
+        neg_prompts = concept_data["negative"][: self._max_prompts]
+
+        logger.info(
+            f"Computing CAA vector for '{concept}' at layer {layer_idx} "
+            f"({len(pos_prompts)}+ / {len(neg_prompts)}- prompts)"
+        )
+
+        # Capture activations for positive and negative prompts
+        pos_acts = self._capture_activations(
+            model, tokenizer, pos_prompts, layer_idx
+        )
+        neg_acts = self._capture_activations(
+            model, tokenizer, neg_prompts, layer_idx
+        )
+
+        # Compute contrastive direction
+        mean_pos = pos_acts.mean(dim=0)
+        mean_neg = neg_acts.mean(dim=0)
+        direction = mean_pos - mean_neg
+
+        # Normalise to unit vector
+        norm = torch.norm(direction)
+        if norm > 1e-8:
+            direction = direction / norm
+
+        elapsed = time.perf_counter() - t0
+
+        logger.info(
+            f"âœ… CAA vector computed for '{concept}' @ layer {layer_idx} "
+            f"in {elapsed:.2f}s (dim={direction.shape[0]}, norm={float(norm):.4f})"
+        )
+
+        return {
+            "concept": concept,
+            "layer": layer_idx,
+            "direction_vector": direction.tolist(),
+            "dimension": int(direction.shape[0]),
+            "magnitude": float(norm),
+            "num_positive_prompts": len(pos_prompts),
+            "num_negative_prompts": len(neg_prompts),
+            "compute_time_ms": round(elapsed * 1000, 1),
+        }
+
+    def compute_for_patch(
+        self,
+        model: torch.nn.Module,
+        tokenizer: Any,
+        concept: str,
+        layer_indices: List[int],
+    ) -> Dict[int, List[float]]:
+        """
+        Compute CAA vectors for multiple layers (used during patch export).
+
+        Returns dict mapping layer_idx â†’ direction_vector.
+        """
+        vectors = {}
+        for layer_idx in layer_indices:
+            try:
+                result = self.compute_vector(
+                    model, tokenizer, concept, layer_idx
+                )
+                vectors[layer_idx] = result["direction_vector"]
+            except Exception as e:
+                logger.warning(
+                    f"Failed to compute vector for layer {layer_idx}: {e}"
+                )
+                vectors[layer_idx] = None
+        return vectors
+
