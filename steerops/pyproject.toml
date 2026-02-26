@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "steerops"
+version = "0.3.0"
+description = "Apply activation steering patches to any HuggingFace model — modify behavior without retraining"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [{name = "SteerOps"}]
+keywords = [
+    "llm", "activation-steering", "interpretability",
+    "transformers", "mechanistic-interpretability",
+    "model-editing", "alignment", "steering-vectors",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+]
+
+[project.optional-dependencies]
+eval = ["sentence-transformers>=2.0.0"]
+dev = ["pytest", "pytest-cov"]
+
+[project.scripts]
+steerops = "steerops.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/shrey0303/activation_Steering"
+Documentation = "https://github.com/shrey0303/activation_Steering#readme"
+Issues = "https://github.com/shrey0303/activation_Steering/issues"
+
