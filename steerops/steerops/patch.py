@@ -63,7 +63,7 @@ class Patch:
     interventions: List[Intervention] = field(default_factory=list)
     raw: Dict[str, Any] = field(default_factory=dict)
 
-    # â”€â”€ Factory methods â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Factory methods ──────────────────────────────────────
 
     @classmethod
     def from_file(cls, path: Union[str, Path]) -> "Patch":
@@ -148,3 +148,127 @@ class Patch:
         -------
         A new merged Patch.
         """
+        if not patches:
+            raise ValueError("Cannot merge empty list of patches")
+
+        if len(patches) == 1:
+            return patches[0]
+
+        # Collect interventions by layer
+        layer_interventions: Dict[int, List[Intervention]] = {}
+        for patch in patches:
+            for iv in patch.interventions:
+                if iv.layer not in layer_interventions:
+                    layer_interventions[iv.layer] = []
+                layer_interventions[iv.layer].append(iv)
+
+        # Merge by strategy
+        merged_interventions = []
+        for layer_idx in sorted(layer_interventions.keys()):
+            ivs = layer_interventions[layer_idx]
+
+            if strategy == "first":
+                merged_interventions.append(ivs[0])
+            elif strategy == "sum":
+                total_strength = sum(iv.strength for iv in ivs)
+                # Use direction vector from first one that has it
+                vec = next(
+                    (iv.direction_vector for iv in ivs if iv.direction_vector),
+                    None,
+                )
+                merged_interventions.append(
+                    Intervention(
+                        layer=layer_idx,
+                        strength=total_strength,
+                        direction_vector=vec,
+                        notes=f"Merged ({len(ivs)} sources, sum)",
+                    )
+                )
+            else:  # average
+                avg_strength = sum(iv.strength for iv in ivs) / len(ivs)
+                vec = next(
+                    (iv.direction_vector for iv in ivs if iv.direction_vector),
+                    None,
+                )
+                merged_interventions.append(
+                    Intervention(
+                        layer=layer_idx,
+                        strength=round(avg_strength, 4),
+                        direction_vector=vec,
+                        notes=f"Merged ({len(ivs)} sources, avg)",
+                    )
+                )
+
+        models = list({p.model for p in patches if p.model})
+
+        logger.info(
+            f"Merged {len(patches)} patches → {len(merged_interventions)} "
+            f"interventions ({strategy})"
+        )
+
+        return cls(
+            name=name,
+            model=models[0] if len(models) == 1 else "",
+            version="1.0",
+            description=f"Merged from: {', '.join(p.name for p in patches)}",
+            interventions=merged_interventions,
+            raw={},
+        )
+
+    # ── Helpers ──────────────────────────────────────────────
+
+    def validate_for_model(self, num_layers: int) -> List[str]:
+        """Return a list of warnings if the patch may be incompatible."""
+        warnings = []
+        for iv in self.interventions:
+            if iv.layer >= num_layers:
+                warnings.append(
+                    f"Layer {iv.layer} exceeds model layer count ({num_layers})"
+                )
+            if abs(iv.strength) > 10:
+                warnings.append(
+                    f"Layer {iv.layer} strength {iv.strength} is unusually high"
+                )
+        return warnings
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Export the patch as a dictionary."""
+        return {
+            "metadata": {
+                "name": self.name,
+                "model": self.model,
+                "version": self.version,
+                "description": self.description,
+            },
+            "interventions": [
+                {
+                    "layer": iv.layer,
+                    "strength": iv.strength,
+                    "direction_vector": iv.direction_vector,
+                    "notes": iv.notes,
+                }
+                for iv in self.interventions
+            ],
+        }
+
+    def save(self, path: Union[str, Path]) -> Path:
+        """Save the patch to a JSON file."""
+        path = Path(path)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self.to_dict(), f, indent=2)
+        logger.info(f"Saved patch to: {path}")
+        return path
+
+    def summary(self) -> str:
+        """Human-readable summary."""
+        lines = [
+            f"Patch: {self.name}",
+            f"Model: {self.model or 'any'}",
+            f"Interventions: {len(self.interventions)}",
+        ]
+        for iv in self.interventions:
+            lines.append(f"  {iv}")
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        return f"Patch(name={self.name!r}, interventions={len(self.interventions)})"
