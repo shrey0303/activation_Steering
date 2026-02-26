@@ -1,5 +1,5 @@
 """
-Core Steerer class â€” the main public API for steerops.
+Core Steerer class — the main public API for steerops.
 
 Usage:
     from steerops import Steerer
@@ -57,7 +57,7 @@ class Steerer:
         self._applied = False
         self._model = None
 
-    # â”€â”€ Factory methods â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Factory methods ────────────────
 
     @classmethod
     def from_patch(cls, path: Union[str, Path]) -> "Steerer":
@@ -77,7 +77,7 @@ class Steerer:
         patch = Patch.from_url(url)
         return cls(patch)
 
-    # â”€â”€ Core API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Core API ─────────────────────────────────────────────
 
     def apply(self, model: Any) -> Any:
         """
@@ -162,7 +162,7 @@ class Steerer:
         ]
         return "\n".join(lines)
 
-    # â”€â”€ Convenience: one-shot generate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Convenience: one-shot generate ───────────────────────
 
     def generate(
         self,
@@ -174,7 +174,7 @@ class Steerer:
         **kwargs,
     ) -> str:
         """
-        One-shot: apply patch â†’ generate â†’ remove â†’ return text.
+        One-shot: apply patch → generate → remove → return text.
 
         Parameters
         ----------
@@ -278,3 +278,283 @@ class Steerer:
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
         with torch.no_grad():
             base_ids = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                do_sample=temperature > 0,
+                pad_token_id=tokenizer.pad_token_id
+                or tokenizer.eos_token_id,
+            )
+        baseline = tokenizer.decode(
+            base_ids[0][inputs["input_ids"].shape[1]:],
+            skip_special_tokens=True,
+        )
+
+        # Steered
+        steered = self.generate(
+            model, tokenizer, prompt,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+        )
+
+        return {
+            "prompt": prompt,
+            "baseline": baseline,
+            "steered": steered,
+            "patch": self.patch.name,
+            "interventions": len(self.patch.interventions),
+        }
+
+    def evaluate(
+        self,
+        model: Any,
+        tokenizer: Any,
+        prompts: List[str],
+        max_new_tokens: int = 200,
+        temperature: float = 0.7,
+    ) -> Dict[str, Any]:
+        """
+        Quantitative evaluation: run before/after comparison with metrics.
+
+        Returns dict with:
+        - comparisons: list of {prompt, baseline, steered, metrics}
+        - aggregate_metrics: averaged metrics
+        - overall_score: 0-100 composite score
+
+        Example
+        -------
+        >>> result = steerer.evaluate(model, tokenizer, ["Tell me about AI"])
+        >>> print(result["overall_score"])  # e.g. 78.5
+        """
+        import math
+        import time as _time
+
+        t0 = _time.perf_counter()
+
+        # Try to load sentence transformer for semantic metrics
+        embed_model = None
+        try:
+            from sentence_transformers import SentenceTransformer
+            embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+        except Exception:
+            logger.warning("sentence-transformers not available; semantic metrics disabled")
+
+        results = []
+        for prompt in prompts:
+            comparison = self.compare(
+                model, tokenizer, prompt,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+            )
+
+            baseline = comparison["baseline"]
+            steered = comparison["steered"]
+            metrics: Dict[str, float] = {}
+
+            # Length metrics
+            b_len = len(baseline.split())
+            s_len = len(steered.split())
+            metrics["baseline_length"] = b_len
+            metrics["steered_length"] = s_len
+            metrics["length_delta"] = s_len - b_len
+
+            # Vocabulary overlap (Jaccard)
+            b_set = set(baseline.lower().split())
+            s_set = set(steered.lower().split())
+            union = b_set | s_set
+            metrics["vocabulary_overlap"] = (
+                len(b_set & s_set) / max(len(union), 1) if union else 0.0
+            )
+
+            # Semantic shift (cosine distance)
+            if embed_model:
+                embs = embed_model.encode([baseline, steered], convert_to_tensor=True)
+                cos_sim = torch.nn.functional.cosine_similarity(
+                    embs[0].unsqueeze(0), embs[1].unsqueeze(0)
+                ).item()
+                metrics["semantic_similarity"] = round(cos_sim, 4)
+                metrics["semantic_shift"] = round(1.0 - cos_sim, 4)
+
+            # Perplexity delta
+            for label, text in [("baseline", baseline), ("steered", steered)]:
+                try:
+                    inp = tokenizer(
+                        prompt + " " + text,
+                        return_tensors="pt", truncation=True, max_length=512,
+                    )
+                    inp = {k: v.to(model.device) for k, v in inp.items()}
+                    with torch.no_grad():
+                        out = model(**inp, labels=inp["input_ids"])
+                    metrics[f"{label}_perplexity"] = round(
+                        math.exp(min(out.loss.item(), 20)), 2
+                    )
+                except Exception:
+                    metrics[f"{label}_perplexity"] = 0.0
+
+            metrics["perplexity_delta"] = round(
+                metrics.get("steered_perplexity", 0)
+                - metrics.get("baseline_perplexity", 0), 2
+            )
+
+            results.append({
+                "prompt": prompt,
+                "baseline": baseline,
+                "steered": steered,
+                "metrics": metrics,
+            })
+
+        elapsed = _time.perf_counter() - t0
+
+        # Aggregate
+        agg: Dict[str, float] = {}
+        if results:
+            keys = results[0]["metrics"].keys()
+            for k in keys:
+                vals = [r["metrics"].get(k, 0) for r in results]
+                agg[f"avg_{k}"] = round(sum(vals) / len(vals), 4)
+
+        # Overall score
+        shift = agg.get("avg_semantic_shift", 0)
+        sem_score = min(shift / 0.3, 1.0) * 100
+
+        ppl_ratio = (
+            agg.get("avg_steered_perplexity", 1)
+            / max(agg.get("avg_baseline_perplexity", 1), 1e-6)
+        )
+        fluency_score = max(0, 1.0 - abs(ppl_ratio - 1.0) * 0.5) * 100
+
+        overall = round(sem_score * 0.55 + fluency_score * 0.45, 1)
+
+        return {
+            "comparisons": results,
+            "aggregate_metrics": agg,
+            "overall_score": overall,
+            "num_prompts": len(prompts),
+            "total_time_ms": round(elapsed * 1000, 1),
+        }
+
+    # ── Static convenience ───────────────────────────────────
+
+    @staticmethod
+    def run(
+        patch_path: str,
+        model_name: str,
+        prompt: str,
+        max_new_tokens: int = 200,
+        device: str = "auto",
+        quantize: bool = False,
+        trust_remote_code: bool = False,
+    ) -> str:
+        """
+        Full pipeline: load model + patch → generate → cleanup.
+
+        Parameters
+        ----------
+        patch_path : str
+            Path to the patch JSON file.
+        model_name : str
+            HuggingFace model identifier.
+        prompt : str
+            Input prompt.
+        max_new_tokens : int
+        device : str
+            'auto', 'cuda', 'cpu', 'mps'.
+        quantize : bool
+            Whether to load in 4-bit (requires CUDA + bitsandbytes).
+
+        Returns
+        -------
+        Generated text string.
+        """
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        # Determine device
+        if device == "auto":
+            if torch.cuda.is_available():
+                dev = "cuda"
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                dev = "mps"
+            else:
+                dev = "cpu"
+        else:
+            dev = device
+
+        # Load model
+        load_kwargs: Dict[str, Any] = {
+            "trust_remote_code": trust_remote_code,
+            "low_cpu_mem_usage": True,
+        }
+        if quantize and dev == "cuda":
+            from transformers import BitsAndBytesConfig
+            load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_quant_type="nf4",
+            )
+            load_kwargs["device_map"] = "auto"
+        elif dev == "cuda":
+            load_kwargs["torch_dtype"] = torch.float16
+            load_kwargs["device_map"] = "auto"
+
+        logger.info(f"Loading model: {model_name} (device={dev})")
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_name, trust_remote_code=trust_remote_code
+        )
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name, **load_kwargs
+        )
+        if not hasattr(model, "hf_device_map"):
+            model = model.to(dev)
+        model.eval()
+
+        # Apply patch and generate
+        steerer = Steerer.from_patch(patch_path)
+        return steerer.generate(model, tokenizer, prompt, max_new_tokens)
+
+    # ── Internal helpers ─────────────────────────────────────
+
+    @staticmethod
+    def _get_layer_modules(model: Any) -> List[Any]:
+        """Extract transformer layer modules from model."""
+        for attr_path in [
+            "model.layers",
+            "transformer.h",
+            "gpt_neox.layers",
+            "model.decoder.layers",
+        ]:
+            obj = model
+            try:
+                for part in attr_path.split("."):
+                    obj = getattr(obj, part)
+                return list(obj)
+            except AttributeError:
+                continue
+        raise RuntimeError(
+            "Could not auto-detect transformer layers. "
+            "Supported: LLaMA, GPT-2, GPT-NeoX, Mistral, Phi, OPT."
+        )
+
+    @staticmethod
+    def _get_hidden_dim(model: Any) -> Optional[int]:
+        """Try to detect the model's hidden dimension."""
+        config = getattr(model, "config", None)
+        if config:
+            return (
+                getattr(config, "hidden_size", None)
+                or getattr(config, "n_embd", None)
+                or getattr(config, "d_model", None)
+            )
+        return None
+
+    # ── Context manager ──────────────────────────────────────
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.remove()
+
+    def __repr__(self) -> str:
+        return f"Steerer(patch={self.patch.name!r}, active={self.is_active()})"
