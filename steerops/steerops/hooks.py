@@ -78,3 +78,76 @@ class HookManager:
         def hook_fn(
             module: nn.Module,
             input: Tuple[torch.Tensor, ...],
+            output,
+        ):
+            # Handle different output formats
+            if isinstance(output, tuple):
+                hidden = output[0]
+            elif isinstance(output, torch.Tensor):
+                hidden = output
+            else:
+                return output
+
+            with torch.no_grad():
+                if direction_vector is not None:
+                    # Project-and-shift along the given direction
+                    vec = direction_vector.to(hidden.device, hidden.dtype)
+                    if vec.dim() == 1:
+                        vec = vec.unsqueeze(0).unsqueeze(0)  # (1, 1, D)
+                    hidden = hidden + strength * vec
+                else:
+                    # Mean-shift: scale the mean activation across the
+                    # hidden dimension and add it back
+                    mean_act = hidden.mean(dim=-1, keepdim=True)
+                    hidden = hidden + strength * 0.1 * mean_act
+
+            if isinstance(output, tuple):
+                return (hidden,) + output[1:]
+            return hidden
+
+        with self._lock:
+            handle = layer_module.register_forward_hook(hook_fn)
+            hook = HookHandle(
+                layer_idx=layer_idx,
+                handle=handle,
+                strength=strength,
+                description=f"Steer L{layer_idx} @ {strength:+.1f}",
+            )
+            self._hooks.append(hook)
+            logger.debug(f"Added hook: {hook.description}")
+            return hook
+
+    def remove_all(self) -> int:
+        """Remove all registered hooks. Returns count of removed hooks."""
+        with self._lock:
+            count = len(self._hooks)
+            for h in self._hooks:
+                h.handle.remove()
+            self._hooks.clear()
+            if count:
+                logger.debug(f"Removed {count} hooks")
+            return count
+
+    def remove_layer(self, layer_idx: int) -> bool:
+        """Remove hooks for a specific layer."""
+        with self._lock:
+            remaining = []
+            removed = False
+            for h in self._hooks:
+                if h.layer_idx == layer_idx:
+                    h.handle.remove()
+                    removed = True
+                else:
+                    remaining.append(h)
+            self._hooks = remaining
+            return removed
+
+    def summary(self) -> str:
+        """Human-readable summary of active hooks."""
+        with self._lock:
+            if not self._hooks:
+                return "No active hooks"
+            lines = [f"Active hooks ({len(self._hooks)}):"]
+            for h in self._hooks:
+                lines.append(f"  {h.description}")
+            return "\n".join(lines)
