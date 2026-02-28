@@ -1,3 +1,4 @@
+# Fix: preserve KV cache tuple structure in hook output
 """
 Activation Steering Engine v2 — Production-Grade.
 
