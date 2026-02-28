@@ -1,3 +1,4 @@
+# Perf: cache direction vector on correct device/dtype
 # Fix: handle NaN/Inf in steered activations with cooldown
 # Fix: preserve KV cache tuple structure in hook output
 """
