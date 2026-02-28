@@ -1,3 +1,4 @@
+# Fix: handle CPU offloading for layers exceeding VRAM
 """
 Singleton Model Loader.
 
