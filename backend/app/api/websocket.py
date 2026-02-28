@@ -1,3 +1,4 @@
+# Fix: reconnect WebSocket on unexpected disconnect
 """
 WebSocket endpoint for streaming text generation.
 
