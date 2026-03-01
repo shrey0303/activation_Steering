@@ -1,4 +1,5 @@
-﻿// Fix: prevent heatmap render with stale scan data
+// Fix: prevent heatmap render with stale scan data
+// Fix: prevent heatmap render with stale scan data
 // Fix: prevent heatmap render with stale scan data
 // Fix: prevent heatmap render with stale scan data
 import { useEffect, useRef, useMemo, useState } from 'react';
