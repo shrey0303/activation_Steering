@@ -1,3 +1,4 @@
+# Perf: reduce memory allocation in SVD computation
 # Fix: prevent division by zero in CKA computation
 """
 🌟 Mathematical Layer Scanner — Core Innovation.
