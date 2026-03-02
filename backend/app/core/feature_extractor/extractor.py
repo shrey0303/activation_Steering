@@ -1,0 +1,503 @@
+"""
+PCA Feature Extraction Pipeline.
+
+Pipeline:
+  1. Collect residual stream activations from diverse prompts
+  2. PCA per layer
+  3. Auto-label top components via contrastive amplification
+  4. Store in SQLite as reusable Feature Dictionary
+"""
+
+from __future__ import annotations
+
+import sqlite3
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+from loguru import logger
+
+from app.core.feature_dataset import (
+    BEHAVIORAL_KEYWORDS,
+    get_diverse_prompts,
+    get_labeling_prompts,
+)
+from app.core.feature_extractor.models import Feature, _FEATURES_DB, _VECTORS_DIR
+from app.core.feature_extractor.dictionary import FeatureDictionary
+
+
+class FeatureExtractor:
+    """
+    Offline PCA feature extraction pipeline.
+
+    Steps:
+      1. Collect activations from diverse prompts
+      2. Run PCA on each layer's activations
+      3. Auto-label top components
+      4. Store in SQLite + numpy files
+    """
+
+    def __init__(
+        self,
+        top_k: int = 20,
+        auto_label_top_n: int = 5,
+        labeling_strength: float = 5.0,
+        labeling_max_tokens: int = 30,
+        min_variance: float = 0.001,  # drop components < 0.1%
+    ) -> None:
+        self.top_k = top_k
+        self.auto_label_top_n = auto_label_top_n
+        self.labeling_strength = labeling_strength
+        self.labeling_max_tokens = labeling_max_tokens
+        self.min_variance = min_variance
+        self._embedder = None
+
+    def _ensure_embedder(self) -> None:
+        """Lazy-load sentence transformer for auto-labeling."""
+        if self._embedder is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+                self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
+                logger.info("Loaded sentence embedder for auto-labeling")
+            except ImportError:
+                logger.warning(
+                    "sentence-transformers not available — "
+                    "auto-labeling will be skipped"
+                )
+
+    # --- Activation Collection ---
+
+    @torch.no_grad()
+    def _collect_activations(
+        self,
+        model: torch.nn.Module,
+        tokenizer: Any,
+        layer_modules: List[torch.nn.Module],
+        prompts: List[str],
+        device: str,
+    ) -> Dict[int, torch.Tensor]:
+        """
+        Run prompts through the model and collect residual stream
+        activations at each layer.
+
+        Returns: dict mapping layer_idx → tensor(n_prompts, hidden_dim)
+        """
+        n_layers = len(layer_modules)
+        layer_activations: Dict[int, List[torch.Tensor]] = {
+            i: [] for i in range(n_layers)
+        }
+        handles = []
+
+        for idx in range(n_layers):
+            def make_hook(layer_idx: int):
+                def _capture(module, inp, out):
+                    h = out[0] if isinstance(out, tuple) else out
+                    # Mean pool across sequence dimension → (batch, hidden_dim)
+                    pooled = h.float().mean(dim=1)
+                    layer_activations[layer_idx].append(pooled.cpu())
+                return _capture
+            handle = layer_modules[idx].register_forward_hook(make_hook(idx))
+            handles.append(handle)
+
+        total = len(prompts)
+        batch_size = 8
+        for start in range(0, total, batch_size):
+            batch = prompts[start : start + batch_size]
+            inputs = tokenizer(
+                batch,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=128,
+            ).to(device)
+            model(**inputs)
+
+            if (start // batch_size) % 10 == 0:
+                logger.info(
+                    f"Collecting activations: {min(start + batch_size, total)}/{total}"
+                )
+
+        for h in handles:
+            h.remove()
+
+        result = {}
+        for idx in range(n_layers):
+            if layer_activations[idx]:
+                result[idx] = torch.cat(layer_activations[idx], dim=0)
+                # result[idx] shape: (n_prompts, hidden_dim)
+
+        logger.info(
+            f"Collected activations: {len(result)} layers, "
+            f"{result[0].shape[0]} samples each"
+        )
+        return result
+
+    # --- PCA ---
+
+    def _run_pca(
+        self,
+        activations: Dict[int, torch.Tensor],
+    ) -> Dict[int, Tuple[np.ndarray, np.ndarray]]:
+        """
+        Run PCA on each layer's activations.
+
+        Returns: dict mapping layer_idx → (components, explained_variance)
+          components: (top_k, hidden_dim)
+          explained_variance: (top_k,) — fraction of variance
+        """
+        results = {}
+
+        for layer_idx, acts in activations.items():
+            acts_np = acts.numpy()
+            mean = acts_np.mean(axis=0)
+            centered = acts_np - mean
+
+            # SVD-based PCA (more numerically stable than covariance)
+            # centered: (n_samples, hidden_dim)
+            try:
+                U, S, Vt = np.linalg.svd(centered, full_matrices=False)
+            except np.linalg.LinAlgError:
+                logger.warning(f"SVD failed for layer {layer_idx}, skipping")
+                continue
+
+            k = min(self.top_k, len(S))
+            components = Vt[:k]  # (k, hidden_dim)
+
+            total_variance = (S ** 2).sum()
+            explained = (S[:k] ** 2) / total_variance
+
+            # Min-variance filter: drop noise components (< 0.1%)
+            keep_mask = explained >= self.min_variance
+            components = components[keep_mask]
+            explained = explained[keep_mask]
+
+            if len(components) == 0:
+                logger.warning(f"Layer {layer_idx}: all components below min_variance")
+                continue
+
+            results[layer_idx] = (components, explained)
+            logger.debug(
+                f"Layer {layer_idx}: {len(components)} PCs (filtered from {k}) explain "
+                f"{explained.sum()*100:.1f}% variance"
+            )
+
+        logger.info(f"PCA complete: {len(results)} layers processed")
+        return results
+
+    # --- Auto-labeling ---
+
+    @torch.no_grad()
+    def _auto_label_component(
+        self,
+        model: torch.nn.Module,
+        tokenizer: Any,
+        layer_module: torch.nn.Module,
+        component: np.ndarray,
+        device: str,
+    ) -> str:
+        """
+        Label a PCA component using contrastive generation.
+
+        Contrastive approach (CAA-style, doubles signal):
+          1. Generate with component AMPLIFIED (+strength)
+          2. Generate with component SUPPRESSED (-strength)
+          3. delta = embed(amplified) - embed(suppressed)
+          4. Match delta to behavioral keywords
+        """
+        if self._embedder is None:
+            return ""
+
+        prompts = get_labeling_prompts()[:5]
+        v = torch.from_numpy(component).to(device=device, dtype=torch.float32)
+        v = F.normalize(v, dim=-1)
+
+        def generate_texts(steer_strength: float) -> List[str]:
+            """Generate text with given steering strength (0 = no steering)."""
+            handle = None
+            if steer_strength != 0:
+                def hook_fn(module, inp, out):
+                    if isinstance(out, tuple):
+                        x = out[0]
+                        rest = out[1:]
+                    else:
+                        x = out
+                        rest = None
+                    x = x + steer_strength * v
+                    # Norm preservation
+                    orig_norm = (out[0] if isinstance(out, tuple) else out).norm(dim=-1, keepdim=True)
+                    new_norm = x.norm(dim=-1, keepdim=True)
+                    scale = (orig_norm / (new_norm + 1e-8)).clamp(0.95, 1.05)
+                    x = x * scale
+                    if rest is not None:
+                        return (x,) + rest
+                    return x
+                handle = layer_module.register_forward_hook(hook_fn)
+
+            texts = []
+            for prompt in prompts:
+                inputs = tokenizer(prompt, return_tensors="pt").to(device)
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=self.labeling_max_tokens,
+                    temperature=0.7,
+                    do_sample=True,
+                    pad_token_id=tokenizer.pad_token_id,
+                )
+                new_ids = outputs[0][inputs["input_ids"].shape[1]:]
+                texts.append(tokenizer.decode(new_ids, skip_special_tokens=True))
+
+            if handle is not None:
+                handle.remove()
+            return texts
+
+        # Contrastive generation: amplify vs suppress (CAA-style)
+        amplified_texts = generate_texts(+self.labeling_strength)
+        suppressed_texts = generate_texts(-self.labeling_strength)
+
+        # Embed both sets
+        amplified_emb = self._embedder.encode(amplified_texts)
+        suppressed_emb = self._embedder.encode(suppressed_texts)
+
+        # Contrastive delta: 2x signal strength vs single-sided
+        delta = (amplified_emb - suppressed_emb).mean(axis=0)
+        delta_norm = np.linalg.norm(delta)
+
+        if delta_norm < 0.01:
+            return ""  # No meaningful change
+
+        # Compare delta to behavioral keywords
+        keyword_emb = self._embedder.encode(BEHAVIORAL_KEYWORDS)
+        delta_normalized = delta / (delta_norm + 1e-8)
+
+        # Cosine similarity
+        sims = (keyword_emb * delta_normalized).sum(axis=1)
+        best_idx = sims.argmax()
+        best_sim = sims[best_idx]
+
+        if best_sim < 0.15:
+            return ""  # No confident match
+
+        label = BEHAVIORAL_KEYWORDS[best_idx]
+        logger.debug(f"Auto-label: sim={best_sim:.3f} → '{label}'")
+        return label
+
+    # --- Storage ---
+
+    def _init_db(self, db_path: Path) -> sqlite3.Connection:
+        """Initialize SQLite database for feature storage."""
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS features (
+                feature_id TEXT PRIMARY KEY,
+                model_name TEXT NOT NULL,
+                layer_idx INTEGER NOT NULL,
+                component_idx INTEGER NOT NULL,
+                label TEXT DEFAULT '',
+                variance_explained REAL NOT NULL,
+                vector_path TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_features_model
+            ON features(model_name)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_features_layer
+            ON features(model_name, layer_idx)
+        """)
+        conn.commit()
+        return conn
+
+    def _save_feature(
+        self,
+        conn: sqlite3.Connection,
+        feature: Feature,
+        vectors_dir: Path,
+    ) -> None:
+        """Save a single feature to DB + numpy file."""
+        vectors_dir.mkdir(parents=True, exist_ok=True)
+        vec_path = vectors_dir / f"{feature.feature_id}.npy"
+        np.save(str(vec_path), feature.vector)
+
+        conn.execute(
+            "INSERT OR REPLACE INTO features "
+            "(feature_id, model_name, layer_idx, component_idx, "
+            "label, variance_explained, vector_path) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                feature.feature_id,
+                feature.model_name,
+                feature.layer_idx,
+                feature.component_idx,
+                feature.label,
+                feature.variance_explained,
+                str(vec_path),
+            ),
+        )
+
+    # --- Main Pipeline ---
+
+    def extract(
+        self,
+        model: torch.nn.Module,
+        tokenizer: Any,
+        layer_modules: List[torch.nn.Module],
+        model_name: str,
+        device: str = "cpu",
+        db_path: Path = _FEATURES_DB,
+        vectors_dir: Path = _VECTORS_DIR,
+    ) -> FeatureDictionary:
+        """
+        Run the full extraction pipeline.
+
+        1. Collect activations from diverse prompts
+        2. PCA per layer
+        3. Auto-label top components
+        4. Store in SQLite
+        5. Return loaded FeatureDictionary
+        """
+        t0 = time.time()
+        logger.info(f"Starting PCA feature extraction for {model_name}")
+
+        # Prepare embedder for auto-labeling
+        self._ensure_embedder()
+
+        # Step 1: Collect activations
+        prompts = get_diverse_prompts()
+        logger.info(f"Using {len(prompts)} diverse prompts for activation collection")
+
+        activations = self._collect_activations(
+            model, tokenizer, layer_modules, prompts, device
+        )
+
+        # Step 2: PCA
+        pca_results = self._run_pca(activations)
+
+        # Step 3 & 4: Label + Store
+        conn = self._init_db(db_path)
+
+        # Clear old features for this model
+        conn.execute("DELETE FROM features WHERE model_name = ?", (model_name,))
+
+        total_features = 0
+        total_labeled = 0
+
+        for layer_idx, (components, variance) in pca_results.items():
+            for comp_idx in range(len(components)):
+                feature_id = f"L{layer_idx}_PC{comp_idx}"
+                label = ""
+
+                # Auto-label top N components per layer
+                if comp_idx < self.auto_label_top_n and self._embedder is not None:
+                    try:
+                        label = self._auto_label_component(
+                            model, tokenizer,
+                            layer_modules[layer_idx],
+                            components[comp_idx],
+                            device,
+                        )
+                        if label:
+                            total_labeled += 1
+                    except Exception as e:
+                        logger.warning(
+                            f"Auto-label failed for {feature_id}: {e}"
+                        )
+
+                feature = Feature(
+                    feature_id=feature_id,
+                    layer_idx=layer_idx,
+                    component_idx=comp_idx,
+                    vector=components[comp_idx],
+                    label=label if label else feature_id,
+                    variance_explained=float(variance[comp_idx]),
+                    model_name=model_name,
+                )
+                self._save_feature(conn, feature, vectors_dir)
+                total_features += 1
+
+        conn.commit()
+        conn.close()
+
+        elapsed = time.time() - t0
+        logger.info(
+            f"Extraction complete: {total_features} features "
+            f"({total_labeled} auto-labeled) in {elapsed:.1f}s"
+        )
+
+        # Return loaded dictionary
+        return FeatureDictionary.load(model_name, db_path)
+
+
+# --- CLI ---
+
+
+def main():
+    """CLI for running feature extraction."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Extract PCA features from a transformer model"
+    )
+    parser.add_argument(
+        "--model", type=str, default="HuggingFaceTB/SmolLM2-135M",
+        help="HuggingFace model name",
+    )
+    parser.add_argument(
+        "--top-k", type=int, default=20,
+        help="Number of PCA components per layer",
+    )
+    parser.add_argument(
+        "--label-top", type=int, default=5,
+        help="Auto-label top N components per layer",
+    )
+    parser.add_argument(
+        "--device", type=str, default="auto",
+        help="Device: auto, cuda, cpu, mps",
+    )
+    parser.add_argument(
+        "--no-label", action="store_true",
+        help="Skip auto-labeling (faster)",
+    )
+    args = parser.parse_args()
+
+    from app.core.loader import ModelManager
+
+    mm = ModelManager.get_instance()
+    mm.load(
+        model_name=args.model,
+        device_preference=args.device,
+        quantize=False,
+    )
+
+    extractor = FeatureExtractor(
+        top_k=args.top_k,
+        auto_label_top_n=0 if args.no_label else args.label_top,
+    )
+
+    feature_dict = extractor.extract(
+        model=mm.model,
+        tokenizer=mm.tokenizer,
+        layer_modules=mm.get_layer_modules(),
+        model_name=args.model,
+        device=mm.device,
+    )
+
+    print(f"\nExtracted {len(feature_dict.all_features)} features")
+    print(f"Labeled: {len(feature_dict.get_labeled())}")
+    print(f"Layers: {feature_dict.layer_count}")
+
+    print("\n--- Top labeled features ---")
+    for f in feature_dict.get_labeled()[:20]:
+        print(
+            f"  {f.feature_id:12s} | {f.label:20s} | "
+            f"var={f.variance_explained:.4f}"
+        )
+
+
+if __name__ == "__main__":
+    main()
