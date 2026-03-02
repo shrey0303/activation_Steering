@@ -1,4 +1,3 @@
-# Fix: add proper error responses for missing model
 """
 REST API endpoints.
 

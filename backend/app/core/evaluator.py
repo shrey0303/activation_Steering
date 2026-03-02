@@ -1,4 +1,3 @@
-# Fix: handle edge case of empty steered output
 """
 Evaluation Pipeline — Production-Grade Before/After Comparison.
 

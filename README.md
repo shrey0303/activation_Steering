@@ -1,0 +1,400 @@
+<div align="center">
+
+# SteerOps
+
+### Activation Steering for LLMs
+
+
+[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-18-61DAFB.svg)](https://reactjs.org)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org)
+[![License](https://img.shields.io/badge/license-MIT-purple.svg)](LICENSE)
+
+</div>
+
+---
+
+## Table of Contents
+
+- [What is SteerOps?](#what-is-steerops)
+- [How It Works](#how-it-works)
+  - [Phase 1: Mathematical Layer Scanning](#phase-1-mathematical-layer-scanning-scannerpy)
+  - [Phase 1.5: Offline PCA Feature Dictionary](#phase-15-offline-pca-feature-dictionary-feature_extractorpy)
+  - [Phase 2: Behavior Interpretation + Intent Router](#phase-2-behavior-interpretation--intent-router-interpreterpy)
+  - [Phase 3: Layer Resolution](#phase-3-layer-resolution-resolverpy)
+  - [Phase 4: Activation Steering](#phase-4-activation-steering-enginepy)
+  - [Phase 5: Direction Vector Computation](#phase-5-direction-vector-computation-vector_calculatorpy)
+- [Research-Backed Improvements (v2.0)](#research-backed-improvements-v20)
+- [Supported Models](#supported-models)
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+  - [Web UI Guide](#web-ui-guide)
+  - [Steering Diagnostics](#steering-diagnostics-panel-right-bottom)
+- [API Reference](#api-reference)
+- [Python Library (`steerops`)](#python-library-steerops)
+- [Benchmarks](#benchmarks)
+- [Roadmap](#roadmap)
+- [Evaluation Metrics](#evaluation-metrics)
+- [Limitations](#limitations)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
+## What is SteerOps?
+
+SteerOps is an **activation-level debugger and steering tool** for transformer-based language models. Traditional approaches to controlling model behavior rely on prompt engineering or fine-tuning. SteerOps takes a fundamentally different approach:
+
+1. **Scans** model weight matrices mathematically (SVD, attention entropy, FFN norms)
+2. **Extracts** an offline PCA Feature Dictionary of orthogonal steering directions per layer
+3. **Maps** each layer to a functional category based on mechanistic interpretability research
+4. **Interprets** user-provided behavior descriptions using semantic embedding matching
+5. **Steers** activations at specific layers in real-time using PyTorch forward hooks with orthogonal projection, Lâ€šâ€š norm preservation, and adaptive decay
+6. **Exports** validated interventions as portable JSON patches
+
+**Key Innovation:** SteerOps uses a hybrid offline-then-runtime architecture. Heavy computation (PCA, auto-labeling) runs offline once per model. Runtime steering is O(1) lookup + forward hook injection â‚¬" no re-running forward passes, no gradient computation.
+
+---
+
+## How It Works
+
+### Phase 1: Mathematical Layer Scanning (`scanner.py`)
+
+> **Note (v2.0):** Phase 1 is now used strictly for **diagnostic visualization** â‚¬" populating the Activation Heatmap and layer categorization display in the UI. It is **no longer in the steering logic path**. Steering now flows through Phase 1.5 (PCA) â€ ' Phase 2 (Intent Router) â€ ' Phase 3 (O(1) Lookup) â€ ' Phase 4 (Engine). The K-Means categorization remains useful for understanding model structure at a glance, but all runtime steering decisions use the PCA Feature Dictionary directly.
+
+The scanner profiles every transformer layer by analyzing weight matrices directly. No forward pass is needed.
+
+#### Metrics Computed Per Layer
+
+| Metric | Method | What It Reveals |
+|--------|--------|-----------------|
+| **SVD Effective Rank** | Singular Value Decomposition of attention weight matrices | Higher rank â€ ' more diverse learned transformations â€ ' complex processing |
+| **Attention Entropy** | Shannon entropy of `W_Q @ W_K.T` eigenvalues | High entropy â€ ' distributed attention â€ ' semantic/global processing |
+| **FFN Norm** | Frobenius norm of feed-forward weight matrices | Large norms â€ ' strong non-linear transforms â€ ' reasoning/retrieval |
+| **Inter-Layer CKA** | Centered Kernel Alignment between adjacent layers | Sharp drops â€ ' functional boundary between processing stages |
+
+#### How SVD Effective Rank Works
+
+```
+Given weight matrix W Ë†Ë† â€žÂ^(dÃƒ--d):
+  1. Compute singular values: ÃÆ’â€šÂ â€°Â¥ ÃÆ’â€šâ€š â€°Â¥ ... â€°Â¥ ÃÆ’_n
+  2. Normalize: p_i = ÃÆ’_i / ÃŽÂ£ÃÆ’_j
+  3. Compute entropy: H = -ÃŽÂ£ p_i . log(p_i)
+  4. Effective rank = e^H
+
+Higher effective rank â€ ' the layer learned a more complex transformation
+Lower effective rank â€ ' dominated by few singular values â€ ' simpler function
+```
+
+#### How Attention Entropy Works
+
+```
+For attention weight matrices W_Q, W_K:
+  1. Compute W = W_Q @ W_K.T (attention pattern proxy)
+  2. Extract eigenvalues ÃŽÂ»â€šÂ, ÃŽÂ»â€šâ€š, ...
+  3. Normalize to probability distribution
+  4. Shannon entropy H = -ÃŽÂ£ p_i . logâ€šâ€š(p_i)
+
+High entropy â€ ' attention distributed broadly â€ ' global/semantic processing
+Low entropy â€ ' attention focused narrowly â€ ' local/syntactic processing
+```
+
+#### Layer Categorization
+
+After computing features, layers are categorized using K-Means clustering validated against positional heuristics from mechanistic interpretability research:
+
+| Category | Position Range | Function | Citation |
+|----------|---------------|----------|----------|
+| `token_embedding` | 0â‚¬"5% | Raw vocabulary lookup | Universal |
+| `positional_morphological` | 5â‚¬"12% | Position encoding, morphology | Logit Lens (nostalgebraist 2020) |
+| `syntactic_processing` | 12â‚¬"25% | Grammar, clause structure | Hewitt & Manning 2019 |
+| `entity_semantic` | 25â‚¬"40% | Entity tracking, polysemy | Attention head analysis |
+| `knowledge_retrieval` | 40â‚¬"55% | Factual recall via FF key-value | Geva et al. 2021 |
+| `reasoning_planning` | 55â‚¬"70% | Multi-step inference | Mid-layer attention studies |
+| `safety_alignment` | 70â‚¬"78% | Refusal circuits, guardrails | Anthropic activation patching |
+| `information_integration` | 78â‚¬"88% | Cross-layer signal merging | Lawson et al. 2025 |
+| `style_personality` | 88â‚¬"95% | Tone, register, personality | Late-layer generation studies |
+| `output_distribution` | 95â‚¬"100% | Final token probabilities | Logit Lens studies |
+
+Scan results are cached in SQLite for instant subsequent access.
+
+---
+
+### Phase 1.5: Offline PCA Feature Dictionary (`feature_extractor.py`)
+
+**New in v2.0** â‚¬" Builds an indexed dictionary of orthogonal steering directions via PCA, run offline once per model.
+
+#### Pipeline
+
+```
+1. Run 165 diverse prompts through the model
+2. Capture residual stream activations at every layer (mean-pooled)
+3. Center the data + run SVD-based PCA per layer
+4. Extract top-K principal components (with min-variance noise filter)
+5. Auto-label top 5 components per layer via contrastive generation probing
+6. Store in SQLite (metadata) + NumPy files (vectors)
+```
+
+#### PCA Math
+
+```
+Given activations A Ë†Ë† â€žÂ^(n_prompts Ãƒ-- hidden_dim) at layer â€ž":
+
+  1. Center: Ã„â‚¬ = A - mean(A)
+  2. SVD:    Ã„â‚¬ = U . S . VÃ¡Âµâ‚¬
+  3. Top-K:  components = VÃ¡Âµâ‚¬[:k]       # (k, hidden_dim)
+  4. Variance: explained_i = SÂ²Ã¡ÂµÂ¢ / ÃŽÂ£SÂ²  # fraction per component
+
+Components are orthogonal by construction (SVD guarantees this).
+```
+
+#### Min-Variance Noise Filter
+
+Components explaining < 0.1% variance are automatically dropped, preventing noise PCA components from polluting the feature dictionary. In practice, this reduces 20 requested components to 3â‚¬"10 meaningful directions per layer.
+
+#### Contrastive Auto-Labeling (CAA-Style)
+
+Each top component is labeled using a contrastive approach (Rimsky et al., "Steering Llama 2 via Contrastive Activation Addition"):
+
+1. **Amplify** (+5.0 strength) the component during generation across probe prompts
+2. **Suppress** (-5.0 strength) the same component during generation
+3. Compute `delta = embed(amplified_outputs) - embed(suppressed_outputs)`
+4. Match `delta` against behavioral keywords via cosine similarity
+
+This contrastive approach **doubles the signal strength** vs. single-sided (steered vs. baseline), producing more reliable labels.
+
+#### Feature ID Format
+
+```
+L{layer_idx}_PC{component_idx}
+
+Examples:
+  L14_PC0  â€ '  Layer 14, highest-variance component
+  L22_PC3  â€ '  Layer 22, 4th component
+```
+
+#### Files
+
+| File | Purpose |
+|------|---------|
+| `feature_extractor.py` | Full offline pipeline + `FeatureDictionary` class with O(1) lookup |
+| `feature_dataset.py` | 165 diverse prompts, labeling prompts, behavioral keywords |
+
+---
+
+### Phase 2: Behavior Interpretation + Intent Router (`interpreter.py`)
+
+The interpreter uses **per-layer bidirectional semantic matching** to determine which layers to target and in what direction.
+
+#### Legacy Mode: Semantic Matching
+
+For each of the 10 layer categories, we maintain two semantic descriptions:
+- **Enhance description**: What behaviors INCREASE this layer's function
+- **Suppress description**: What behaviors DECREASE this layer's function
+
+When the user provides a behavior (e.g., "be very angry"):
+
+```
+1. Embed the user's input using all-MiniLM-L6-v2 sentence transformer
+2. For each layer category:
+   a. Compute cosine similarity against the ENHANCE description
+   b. Compute cosine similarity against the SUPPRESS description
+   c. Direction = whichever side scores higher
+   d. Magnitude = calibrated similarity score
+3. Return layers sorted by magnitude with independent directions
+```
+
+#### New: Intent Router with NLI Cross-Encoder (v2.0)
+
+The `IntentRouter` uses a **two-stage retrieve-then-classify** pipeline:
+
+**Stage 1 â‚¬" Retrieval (Bi-Encoder):**
+```
+1. User types: "make the model less toxic"
+2. Embed the text using all-MiniLM-L6-v2 (bi-encoder)
+3. Cosine similarity against all labeled feature embeddings
+4. Return top-K matching features by topic
+```
+
+**Stage 2 â‚¬" Direction Classification (NLI Cross-Encoder):**
+```
+For each top-K candidate:
+  1. Construct hypothesis: "Amplify {feature_label}"
+  2. Feed [user_text, hypothesis] into cross-encoder/nli-deberta-v3-small
+  3. Model outputs: [contradiction, entailment, neutral] probabilities
+  4. contradiction > entailment â€ ' suppress (-1.0)
+     entailment > contradiction â€ ' enhance (+1.0)
+```
+
+**Why both models?** NLI alone cannot do retrieval â‚¬" it finds spurious cross-concept relationships. For example, `"Make it more toxic"` vs `"Amplify anger"` scores contradiction=0.998, incorrectly beating the correct match. The bi-encoder correctly isolates topic matching (WHICH feature); the NLI correctly determines direction (enhance vs suppress). Together: 7/7 test accuracy. Separately: 2/7.
+
+Falls back to keyword detection if the cross-encoder is unavailable.
+
+#### Example Results
+
+| Input | Layer Effects |
+|-------|---------------|
+| "be very angry" | suppress reasoning (-0.79), enhance style (+0.58), suppress safety (-0.55) |
+| "be very polite" | enhance safety (+0.66), enhance style (+0.60) |
+| "be very intelligent" | enhance knowledge (+0.79), enhance reasoning (+0.66) |
+| "be very helpful" | enhance reasoning (+0.85), enhance knowledge (+0.70) |
+| "be extremely cautious" | enhance safety (+1.00) |
+
+**Key Design Decision:** Direction is determined per-layer, not globally. "Be angry" correctly enhances style (anger IS personality expression) while suppressing helpfulness (angry = not helpful) and safety (anger bypasses caution).
+
+#### Confidence Measurement
+
+Confidence is calculated based on:
+- **Semantic similarity strength** â‚¬" how closely the behavior matches layer descriptions
+- **Dominance gap** â‚¬" how much the top match exceeds other matches
+- **Dynamic threshold** â‚¬" `mean + 0.3 Ãƒ-- std` of all similarity scores
+
+---
+
+### Phase 3: Layer Resolution (`resolver.py`)
+
+Maps the interpreter's output (category + direction + magnitude) to specific layer indices in the loaded model.
+
+#### Legacy Mode: Scan-Based Resolution
+
+```
+1. Look up which layers belong to each matched category (from scan results)
+2. Sort by the layer's scan anomaly score (higher = more impactful)
+3. Select top N layers per category
+4. Return with direction vectors ready for steering
+```
+
+#### New: Feature Dictionary Direct Lookup (v2.0)
+
+O(1) lookup: `feature_id â€ ' (layer_index, vector, strength, direction)` â‚¬" no heuristics needed.
+
+#### Bell-Curve Layer-Aware Strength (v2.0)
+
+Default strength is automatically scaled by a Gaussian bell curve centered at **60% model depth**:
+
+```python
+relative_pos = feature.layer_idx / total_layers
+multiplier = exp(-((relative_pos - 0.6)Â² / 0.1))
+```
+
+Research across Llama 2, GPT-2, and Mistral confirms:
+- **Early layers (0â‚¬"20%)**: handle tokens/syntax â€ ' low strength to avoid breaking grammar
+- **Middle layers (~60%)**: optimal injection point â€ ' full strength
+- **Late layers (80â‚¬"100%)**: diminishing returns â€ ' reduced strength
+
+Example for a 30-layer model:
+
+| Layer | Relative Position | Bell Multiplier | Effective Strength (base=2.0) |
+|-------|-------------------|-----------------|-------------------------------|
+| L0    | 0.00              | 0.027           | 0.05                          |
+| L10   | 0.33              | 0.491           | 0.98                          |
+| L18   | 0.60              | **1.000**       | **2.00** (peak)               |
+| L25   | 0.83              | 0.580           | 1.16                          |
+| L29   | 0.97              | 0.261           | 0.52                          |
+
+---
+
+### Phase 4: Activation Steering (`engine.py`)
+
+The steering engine modifies model activations in real-time using PyTorch forward hooks.
+
+#### Steering Pipeline (Per Token)
+
+```
+For each registered hook at layer â€ž":
+
+  STEP 0: Extract x from output, preserve KV cache
+  STEP 1: Cooldown check (circuit breaker recovery)
+  STEP 2: Gating â‚¬" skip injection if x is already aligned with v
+           (cosine similarity > auto-calibrated gate_threshold)
+  STEP 3: Steering or Erasure
+           Mode "steer": Orthogonal projection + adaptive decay
+           Mode "erase": LEACE null-space projection
+  STEP 4: Lâ€šâ€š norm preservation (clamp scale within Â±5%)
+  STEP 5: NaN/Inf safety check â€ ' revert + cooldown on failure
+```
+
+#### Orthogonal Projection (Default Mode)
+
+Instead of naive additive steering (`x + ÃŽÂ±.v`), which doubles the component already present:
+
+```
+v_orth = v - proj_xÃŒâ€š(v) = v - (v . xÃŒâ€š)xÃŒâ€š
+x_steered = x + strength Ãƒ-- v_orth
+```
+
+Only the **orthogonal component** is injected â‚¬" the part of the steering direction not already in the activation.
+
+#### LEACE Concept Erasure (Mode: "erase")
+
+Based on Belrose et al., "LEACE: Perfect Linear Concept Erasure in Closed Form":
+
+```
+x_erased = x - (x . vÃŒâ€š)vÃŒâ€š
+```
+
+Provably removes **all** linear information about concept v from the activation. Unlike suppression (which can overshoot and invert), erasure is binary and mathematically guaranteed.
+
+#### Adaptive Strength Decay
+
+```
+decay = max(min_decay, 1.0 - token_count Ãƒ-- decay_rate)
+effective_strength = base_strength Ãƒ-- decay
+```
+
+Full strength on early tokens, decaying over time â‚¬" prevents late-token drift.
+
+#### Logit Entropy Circuit Breaker
+
+After each token, compute Shannon entropy of the logit distribution. If entropy > 6.0 nats, all hooks enter cooldown (5 tokens of pass-through).
+
+#### Gram-Schmidt Multi-Vector Composition (v2.0)
+
+When multiple hooks are active simultaneously, their direction vectors may overlap. Before each generation, all active vectors are orthogonalized via Gram-Schmidt:
+
+```
+For hooks [vâ€šâ‚¬, vâ€šÂ, vâ€šâ€š]:
+  vâ€šÂ' = vâ€šÂ - proj_vâ€šâ‚¬(vâ€šÂ)              # remove vâ€šâ‚¬ component from vâ€šÂ
+  vâ€šâ€š' = vâ€šâ€š - proj_vâ€šâ‚¬(vâ€šâ€š) - proj_vâ€šÂ'(vâ€šâ€š) # remove both components from vâ€šâ€š
+  Normalize all to unit length
+```
+
+This guarantees each vector steers an **independent axis** with zero interference.
+
+> **When is this needed?** PCA components from the *same layer* are already strictly orthogonal by SVD construction â‚¬" Gram-Schmidt is a no-op for them. It becomes necessary when combining vectors from **different sources**: e.g., a PCA feature vector + a custom CAA vector, or PCA vectors from different layers projected into the same residual stream. The implementation handles all cases uniformly.
+
+#### Auto-Calibrated Gating
+
+In high-dimensional spaces (4096D for Llama-3), cosine similarity naturally shrinks toward zero. Gate threshold is auto-calibrated:
+
+```python
+gate_threshold = 2.0 / sqrt(hidden_dim)
+# 768D â€ ' 0.072,  4096D â€ ' 0.031
+```
+
+**Safety Features:**
+- NaN/Inf detection and clamping
+- Automatic hook cleanup after generation
+- Thread-safe concurrent generation support
+- Steering overhead measurement (typically <2ms per token)
+
+---
+
+### Phase 5: Direction Vector Computation (`vector_calculator.py`)
+
+Direction vectors are computed via **Contrastive Activation Addition (CAA)**:
+
+```
+1. Define contrastive prompt pairs:
+   Positive: "Please help me with this task"
+   Negative: "I refuse to help you with anything"
+
+2. Run both through the model, capture activations at the target layer
+
+3. Direction vector = mean(positive_activations) - mean(negative_activations)
+
+4. L2-normalize for stable steering magnitude
+```
+
+The direction vector is a property of the layer and model, not the specific behavior. It represents the "direction" in activation space that corresponds to the behavioral concept.

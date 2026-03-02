@@ -1,4 +1,3 @@
-# Fix: session lock deadlock on concurrent requests
 """
 Production concurrency guard for SteerOps.
 
