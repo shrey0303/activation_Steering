@@ -798,3 +798,153 @@ SteerOps has been evaluated on two model sizes using the full CAA pipeline (scan
 
 ### Qwen2.5-0.5B â‚¬" 6/25 significant tests
 
+| Concept | Layer | Best Cohen's d | p-value | Significant | Fluency |
+|---------|-------|----------------|---------|-------------|----------|
+| **Creativity** | 21 | **0.647** | **0.017** | **Å“â€¦** (4/5 strengths) | Å“â€¦ |
+| **Verbosity** | 11 | **1.179** | **0.002** | **Å“â€¦** (2/5 strengths) | Å“â€¦ |
+| Toxicity | 13 | 0.928 | 0.080 | ÂÅ’ | Å¡Â Ã¯Â¸Â |
+| Politeness | 11 | 0.559 | 0.315 | ÂÅ’ | Å“â€¦ |
+| Refusal | 13 | 0.029 | 0.634 | ÂÅ’ | Å“â€¦ |
+
+Pipeline-level fluency preserved (mean perplexity ratio 1.13). Individual toxicity evaluations at high strength pushed above 2.0.
+
+### Qwen2.5-7B â‚¬" 6/25 significant tests
+
+| Concept | Layer | Best Cohen's d | p-value | Significant | Fluency |
+|---------|-------|----------------|---------|-------------|----------|
+| **Creativity** | 19 | **1.236** | **0.003** | **Å“â€¦** (4/5 strengths) | Å¡Â Ã¯Â¸Â |
+| **Politeness** | 9 | **-1.258** | **0.016** | **Å“â€¦** (2/5 strengths) | Å¡Â Ã¯Â¸Â |
+| Toxicity | 21 | 0.440 | 0.333 | ÂÅ’ | Å¡Â Ã¯Â¸Â |
+| Refusal | 21 | -0.242 | 0.429 | ÂÅ’ | ÂÅ’ |
+| Verbosity | 9 | 0.753 | 0.057 | ÂÅ’ | Å“â€¦ |
+
+Creativity showed a clean monotonic dose-response: d=0.64 at strength 1.0 â€ ' d=1.22 at strength 2.0 across four consecutive significant results. On 7B, steering above strength 1.5 degrades fluency (perplexity >2.0). Politeness at strength 1.0 was the cleanest result: d=-1.26, p=0.016, perplexity 1.14.
+
+> **7B debugging note:** Initial 7B evaluation showed zero steering effect (mean shift 0.004). Root cause: gating threshold and strength parameters calibrated on 896-dim hidden space (0.5B) were not effective on 3584-dim (7B). Gating fired on every hook call, and perturbation was <1% of activation norm. Fixed via activation-norm-scaled strength injection and adaptive gating. See [BENCHMARKS.md](BENCHMARKS.md).
+
+### Steering Examples (0.5B, best strength)
+
+**Verbosity Control** (strength 2.0, layer 11):
+
+| | Output |
+|---|---|
+| **Prompt** | What is 2+2? |
+| **Baseline** | 2+2 is 4. It is a basic arithmetic operation that involves adding two numbers together. The result of adding 2 and 2 is always 4, regardless of... |
+| **Steered** | 4. |
+
+**Creativity Boost** (strength 1.0, layer 21):
+
+| | Output |
+|---|---|
+| **Prompt** | Describe the color blue. |
+| **Baseline** | Blue is a primary color that is commonly associated with the sky and the ocean. It is one of the three primary colors in the RGB color model... |
+| **Steered** | Blue is the color of a thousand unspoken thoughts â‚¬" the hue that drifts between melancholy and wonder, like an ocean that can't decide whether to cradle you or swallow you whole... |
+
+| | Output |
+|---|---|
+| **Prompt** | Write a sentence about a tree. |
+| **Baseline** | A tree is a tall plant that grows in the ground and provides shade, oxygen, and habitats for various animals and insects. |
+| **Steered** | The old oak had been keeping secrets since before the town had a name â‚¬" its roots threading through forgotten stories like fingers through tangled hair. |
+
+---
+
+## Roadmap
+
+| Phase | Feature | Status |
+|-------|---------|--------|
+| Å“â€¦ 1.0 | Core pipeline (scanner, engine, evaluator) | Complete |
+| Å“â€¦ 1.5 | PCA Feature Dictionary + Intent Router | Complete |
+| Å“â€¦ 2.0 | CAA vectors, orthogonal projection, LEACE erasure | Complete |
+| Å“â€¦ 2.1 | Benchmarks (0.5B verified, 7B hook issue identified) | Complete |
+| Å“â€¦ 2.2 | **7B scale fix** â‚¬" activation-norm-scaled strength, adaptive gating (6/25 sig) | Complete |
+| Ã°Å¸"Å“ 3.0 | **Multi-layer steering** â‚¬" inject at N, N+1, N+2 to prevent residual healing | Next |
+| Ã°Å¸"Å“ 3.1 | **MoE-aware routing** â‚¬" steer expert pathways in MoE architectures | Planned |
+| Ã°Å¸"Å“ 3.2 | **SAE integration** â‚¬" monosemantic feature dictionaries (Anthropic-style) | Planned |
+| Ã°Å¸"Å“ 4.0 | **Attention head targeting** â‚¬" steer specific heads, not full layers | Research |
+| Ã°Å¸"Å“ 4.1 | **Gradient-based probing** â‚¬" complement weight analysis with activation probes | Research |
+
+---
+
+## Evaluation Metrics
+
+SteerOps evaluates steering quality using 6 metrics:
+
+| Metric | Weight | What It Measures |
+|--------|--------|-----------------|
+| **Semantic Shift** | 25% | Cosine distance between steered and unsteered outputs (sentence embeddings) |
+| **Concept Alignment** | 25% | Cosine similarity of steered output to target concept anchor |
+| **Perplexity Delta** | 15% | Change in output fluency â‚¬" lower delta = better coherence preservation |
+| **Behavioral Consistency** | 15% | Stability across multiple prompts â‚¬" std of per-prompt scores |
+| **Steering Efficiency** | 10% | Semantic shift achieved per unit of steering strength |
+| **Format Preservation** | 10% | Whether output maintains expected length and structure |
+
+### Scoring
+
+```
+Overall = ÃŽÂ£(metric_score Ãƒ-- weight) Ãƒ-- 100
+Grades: A+ (â€°Â¥95), A (â€°Â¥90), B+ (â€°Â¥85), B (â€°Â¥80), C+ (â€°Â¥75), C (â€°Â¥70), D (â€°Â¥60), F (<60)
+```
+
+---
+
+## Limitations
+
+### Current Limitations
+
+1. **Small models (< 1B params)** have limited layer differentiation
+   - Only 30 layers in SmolLM2-135M â€ ' multiple behavioral categories share layers
+   - Lower confidence scores for nuanced behaviors
+   - Recommended: Use 7B+ models for production
+
+2. **Direction vectors are model-specific**
+   - A direction vector computed on Llama-2-7B will NOT work on Mistral-7B
+   - Patches are tied to the exact model architecture
+   - Re-export is needed when switching models
+
+3. **Semantic matching depends on sentence-transformers**
+   - all-MiniLM-L6-v2 has limited understanding of highly domain-specific terms
+   - Very niche behaviors may get low confidence scores
+   - Workaround: use more descriptive phrases ("be rude and dismissive" > "be mean")
+
+4. **Auto-labeling quality depends on model size**
+   - SmolLM2-135M produces weaker labels than Llama-3-8B
+   - Contrastive approach helps, but larger models have more distinct features
+
+5. **PCA components and CAA vectors are polysemantic (dense)**
+   - They capture orthogonal variance directions but may entangle multiple concepts in a single vector.
+   - **Trade-off:** Sparse Autoencoders (SAEs) solve this by finding monosemantic, interpretable features, but require massive training compute. SteerOps accepts polysemanticity in exchange for **zero-training, 60-second immediate steering agility**. (Upgrade path: replacing PCA vectors with pre-trained SAE dictionaries).
+
+6. **Concept erasure is binary**
+   - Unlike the steering slider, erasure mode completely removes a concept direction
+   - There is no "partial erasure" â‚¬" use suppression mode for gradual control
+
+7. **NLI cross-encoder adds ~80MB overhead**
+   - `cross-encoder/nli-deberta-v3-small` is 22M params â‚¬" negligible alongside a 7B model
+   - Falls back to keyword detection if unavailable
+   - Cross-encoder inference adds ~5-10ms per feature candidate
+
+8. **7B models require activation-norm-scaled strength (resolved in v2)**
+   - Initial evaluation showed zero steering effect â‚¬" gating and strength parameters calibrated on 0.5B (hidden_dim=896) were ineffective on 7B (hidden_dim=3584)
+   - **Root cause:** Gating threshold too low (every hook call silently gated out) + perturbation <1% of activation norm
+   - **Fix:** Disabled gating for hidden_dim > 2048, added `act_norm / 10` auto-scaling, widened norm tolerance to 25% for large models
+   - **Result:** 6/25 significant tests on 7B (d=1.22 on creativity, p=0.003)
+   - **Trade-off:** Fluency degrades above strength 1.5 (perplexity > 2.0). Usable range is concept-dependent
+
+### What This Tool Cannot Do
+
+- Fine-tune or permanently modify model weights
+- Work with encoder-only models (BERT, RoBERTa)
+- Steer closed-source API models (GPT-4, Claude)
+- Guarantee behavior changes are consistent across all inputs
+- Replace proper RLHF/DPO alignment for production safety
+- Produce significant steering effects on 7B+ models with single-layer injection (Phase 2 needed)
+
+---
+
+## Contributing
+
+We welcome contributions! Here's how to set up the development environment:
+
+### Development Setup
+
+```bash
