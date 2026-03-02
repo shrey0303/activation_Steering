@@ -598,3 +598,203 @@ SteerOps has two deployment modes controlled by the `STEEROPS_DEPLOY_MODE` envir
 |------|-----------|-------------------|----------|
 | **Local** | `local` (default) | None â‚¬" full access | Personal dev, research |
 | **Production** | `production` | Session lock + rate limiting | Public demos, LinkedIn showcase |
+
+#### Production Mode Features
+
+When `STEEROPS_DEPLOY_MODE=production`:
+
+1. **Session Lock** â‚¬" Only one user can interact with GPU endpoints at a time. Others receive a `503 Service Unavailable` with a friendly message. Lock auto-expires after 5 minutes of inactivity.
+2. **Rate Limiting** â‚¬" Per-IP sliding window: 30 GPU requests/min, 120 lightweight requests/min. Prevents abuse.
+3. **Exempt Endpoints** â‚¬" Health checks, metrics, model listing, and docs are always accessible.
+
+```bash
+# Enable production mode locally for testing:
+set STEEROPS_DEPLOY_MODE=production  # Windows
+export STEEROPS_DEPLOY_MODE=production  # Linux/Mac
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Docker Compose automatically sets `production` mode.
+
+### First Run Walkthrough
+
+```
+1. Open http://localhost:5173
+2. The app loads with default model (SmolLM2-135M)
+3. Wait for model download and loading (~30s first time)
+4. Model scan runs automatically after loading
+5. Switch to "Expected Behavior" tab
+6. Type a behavior: "be very polite"
+7. Click "Analyze & Detect Layers"
+8. Review detected layers (e.g., L27â€ â€˜ for style, L23â€ â€˜ for safety)
+9. Adjust steering strength slider if needed
+10. Type a prompt in the chat and send
+11. See steered output with real-time token streaming
+12. Export the intervention as a JSON patch
+```
+
+### Run PCA Feature Extraction (Optional, v2.0)
+
+```bash
+cd backend
+python -m app.core.feature_extractor --model HuggingFaceTB/SmolLM2-135M --top-k 20
+```
+
+### Web UI Guide
+
+The SteerOps interface has 5 panels:
+
+#### Control Panel (Left)
+
+| Section | What It Does |
+|---------|-------------|
+| **Model Selector** | Type any HuggingFace model ID (e.g., `HuggingFaceTB/SmolLM2-135M`), click Load |
+| **Layer Map** | After scanning, shows all layers colored by category (reasoning, safety, style, etc.) |
+| **Behavior Analysis** | Type a behavior description (e.g., "be very angry") â€ ' click "Analyze & Detect Layers" â€ ' see which layers activate |
+| **Feature Dictionary** | Browse PCA features, relabel them, search by keyword (requires running feature extraction first) |
+
+#### Chat (Center)
+
+Type prompts to generate text. When steering hooks are active (layers selected from analysis), the output is steered in real-time. The chat shows token-by-token streaming via WebSocket.
+
+#### Layer Activation Map (Right Top)
+
+Heatmap of per-layer activations. Send a prompt in chat to see live activation magnitudes across all layers. Layers that fire strongly are highlighted.
+
+#### Steering Diagnostics Panel (Right Bottom)
+
+**This panel shows real-time per-token steering metrics during generation.** It only activates when steering hooks are applied.
+
+| Metric | What It Shows |
+|--------|--------------|
+| **FIRED badge** | Green badge = the hook injected a steering vector on this token |
+| **COOLDOWN badge** | Amber badge = hook is in adaptive decay cooldown (waiting N tokens before re-firing) |
+| **Strength** | Effective steering strength after bell-curve scaling and decay |
+| **Tokens** | Number of tokens processed by this hook |
+| **Overhead** | Per-hook latency in milliseconds (typically <2ms) |
+| **Gate Threshold** | Auto-calibrated gate value â‚¬" `2.0 / Ë†Å¡(hidden_dim)`. If cosine similarity between the current activation and the steering vector is below this, the hook skips injection |
+| **Entropy** | Output token entropy in nats. Low (<4) = confident generation. High (>6) = confused logits |
+| **CIRCUIT BREAKER** | Red pulsing badge = entropy exceeded 6.0 nats, steering was killed to prevent incoherent output |
+| **Strength Timeline** | Sparkline showing effective strength over the last 50 tokens â‚¬" visualizes adaptive decay |
+
+**How to use diagnostics:**
+```
+1. Load a model and scan it
+2. Go to "Behavior Analysis" â€ ' type "be very polite" â€ ' "Analyze & Detect Layers"
+3. Layers are now selected with steering hooks
+4. Type a prompt in chat (e.g., "Tell me about AI")
+5. Watch the Diagnostics panel update per-token as generation streams
+6. The sparkline shows how steering strength decays over time
+7. If entropy spikes, the circuit breaker triggers (red badge)
+```
+
+## API Reference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/health` | System health check |
+| `GET` | `/api/v1/models` | List loaded models |
+| `POST` | `/api/v1/models/load` | Load a model by name |
+| `POST` | `/api/v1/models/unload` | Free model from memory |
+| `GET` | `/api/v1/models/load-status` | Polling endpoint for model loading progress |
+| `POST` | `/api/v1/scan` | Run mathematical layer scan |
+| `POST` | `/api/v1/analyze` | Interpret behavior â€ ' layer mapping |
+| `POST` | `/api/v1/generate` | Generate text with optional steering |
+| `POST` | `/api/v1/activations` | Capture per-layer activation magnitudes |
+| `POST` | `/api/v1/features/extract` | Run offline PCA feature extraction (v2.0) |
+| `GET` | `/api/v1/features` | List all extracted features (v2.0) |
+| `GET` | `/api/v1/features/{id}` | Get a specific feature by ID (v2.0) |
+| `PUT` | `/api/v1/features/{id}/label` | Update feature label (v2.0) |
+| `POST` | `/api/v1/evaluate` | Run before/after evaluation with metrics |
+| `POST` | `/api/v1/patches/export` | Export intervention as JSON patch |
+| `GET` | `/api/v1/patches` | List saved patches |
+| `GET` | `/api/v1/patches/{id}` | Get a specific patch |
+| `GET` | `/api/v1/patches/{id}/download` | Download patch file |
+| `GET` | `/api/v1/metrics` | System performance metrics |
+| `POST` | `/api/v1/vectors/compute` | Compute CAA direction vector |
+| `GET` | `/api/v1/vectors` | List available concept vectors |
+| `WS` | `/api/v1/ws/generate` | Streaming token-by-token generation |
+
+### WebSocket Protocol
+
+```json
+// Client â€ ' Server: Generate
+{"type": "generate", "prompt": "Hello", "max_tokens": 200, "steering": {"layer": 27, "strength": 1.6, "direction_vector": [...]}}
+
+// Server â€ ' Client: Token stream
+{"type": "token", "text": " world", "token_id": 1917}
+
+// Server â€ ' Client: Done with metadata
+{"type": "done", "metadata": {"total_tokens": 42, "latency_ms": 1850.3, "tokens_per_sec": 22.7, "steering_applied": true}}
+
+// Client â€ ' Server: Stop generation
+{"type": "stop"}
+
+// Keep-alive ping/pong
+{"type": "ping"} â€ ' {"type": "pong"}
+```
+
+---
+
+## Python Library (`steerops`)
+
+SteerOps ships a standalone Python library for programmatic patch application:
+
+### Installation
+
+```bash
+pip install steerops
+# With evaluation metrics:
+pip install steerops[eval]
+```
+
+### Usage
+
+```python
+from steerops import Steerer
+
+# Apply a steering patch to any model
+steerer = Steerer.from_patch("politeness_patch.json")
+steerer.apply(model, tokenizer)
+
+# Generate with steering active
+output = steerer.generate("Tell me about quantum physics", max_tokens=200)
+
+# Compare steered vs unsteered
+comparison = steerer.compare(
+    "Explain machine learning",
+    max_tokens=100
+)
+print(comparison["original"])
+print(comparison["steered"])
+print(f"Semantic shift: {comparison['metrics']['semantic_shift']:.3f}")
+
+# Evaluate steering quality
+metrics = steerer.evaluate(
+    prompts=["Hello", "Explain gravity"],
+    target_concept="politeness"
+)
+print(f"Overall score: {metrics['overall_score']}/100 ({metrics['grade']})")
+```
+
+### CLI
+
+```bash
+# Apply a patch and generate
+steerops apply patch.json --prompt "Hello world" --model gpt2
+
+# Inspect a patch
+steerops info patch.json
+
+# Compare with/without steering
+steerops compare patch.json --prompt "Explain AI" --model gpt2
+```
+
+---
+
+## Benchmarks
+
+SteerOps has been evaluated on two model sizes using the full CAA pipeline (scanner â€ ' layer routing â€ ' vector computation â€ ' steering â€ ' evaluation). Full methodology and per-concept breakdowns are in [BENCHMARKS.md](BENCHMARKS.md).
+
+### Qwen2.5-0.5B â‚¬" 6/25 significant tests
+
