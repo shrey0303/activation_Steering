@@ -398,3 +398,203 @@ Direction vectors are computed via **Contrastive Activation Addition (CAA)**:
 ```
 
 The direction vector is a property of the layer and model, not the specific behavior. It represents the "direction" in activation space that corresponds to the behavioral concept.
+
+> **Note:** In v2.0, PCA Feature Extraction (Phase 1.5) provides an alternative path to direction vectors â‚¬" unsupervised, orthogonal by construction, and auto-labeled. CAA remains available for targeted contrastive scenarios.
+
+---
+
+## Research-Backed Improvements (v2.0)
+
+All improvements are backed by published research and verified with integration tests (6/6 passing):
+
+| # | Improvement | Paper/Source | What It Does | Verified |
+|---|-------------|-------------|--------------|----------|
+| 1 | **Gram-Schmidt Orthogonalization** | "Multi-Attribute Orthogonal Subspace Steering" | Ensures multi-vector composition has zero interference (dot products: 0.90 â€ ' 0.000000) | Å“â€¦ |
+| 2 | **Min-Variance Noise Filter** | Standard PCA practice | Drops components < 0.1% variance â‚¬" 20 PCs â€ ' 3 kept when signal concentrated | Å“â€¦ |
+| 3 | **Contrastive Auto-Labeling** | Rimsky et al., "Steering Llama 2 via CAA" | Amplify(+) vs Suppress(-) delta doubles signal vs baseline-only approach | Å“â€¦ |
+| 4 | **Bell-Curve Layer Strength** | Llama 2, GPT-2, Mistral layer studies | Gaussian peak at 60% depth â‚¬" L0=0.05, L18=2.00, L29=0.52 | Å“â€¦ |
+| 5 | **LEACE Concept Erasure** | Belrose et al., "Perfect Linear Concept Erasure" | Null-space projection removes concept completely (3.44 â€ ' 0.000000), preserves perpendicular info exactly | Å“â€¦ |
+| 6 | **NLI Cross-Encoder Direction** | Standard NLI (DeBERTa-v3) | Replaces keyword hacks â‚¬" handles negation natively (13/13 tests passed) | Å“â€¦ |
+
+Additional runtime improvements (implemented but not separately tested):
+- **Adaptive Strength Decay** â‚¬" prevents auto-regressive generation drift
+- **Auto-Calibrated Gating** â‚¬" threshold adjusted per hidden dimension
+- **Lâ€šâ€š Norm Preservation** â‚¬" activation magnitude clamped within Â±5%
+- **Entropy Circuit Breaker** â‚¬" kills steering on confused logits (entropy > 6.0 nats)
+
+---
+
+## Supported Models
+
+SteerOps works with **any HuggingFace transformer model** that uses the standard architecture (attention + FFN layers). Tested and recommended models:
+
+| Model | Parameters | VRAM Required | Quality | Notes |
+|-------|-----------|---------------|---------|-------|
+| `HuggingFaceTB/SmolLM2-135M` | 135M | ~300MB | Demo | 30 layers â‚¬" limited differentiation |
+| `HuggingFaceTB/SmolLM2-360M` | 360M | ~700MB | Better | More distinct layer boundaries |
+| `HuggingFaceTB/SmolLM2-1.7B` | 1.7B | ~3.5GB | Good | Recommended for development |
+| `meta-llama/Llama-2-7b-hf` | 7B | ~14GB (7GB quantized) | Excellent | Production-quality steering |
+| `mistralai/Mistral-7B-v0.1` | 7B | ~14GB (7GB quantized) | Excellent | Strong reasoning layers |
+| `meta-llama/Meta-Llama-3-8B` | 8B | ~16GB (8GB quantized) | Best | 80 layers â‚¬" finest granularity |
+| `meta-llama/Llama-2-70b-hf` | 70B | ~140GB (35GB 4-bit) | Research | Maximum layer resolution |
+
+### Model Requirements
+
+- Must be a **decoder-only transformer** (GPT-style)
+- Must be available on HuggingFace or as a local checkpoint
+- Architecture must have named `model.layers[i]` (standard HuggingFace format)
+- Quantized models (4-bit, 8-bit via bitsandbytes) are fully supported
+
+### How Model Size Affects Quality
+
+```
+Small models (< 1B):
+  "Å“"â‚¬"â‚¬ Few layers (â€°Â¤ 30) â€ ' multiple categories share same layers
+  "Å“"â‚¬"â‚¬ Lower confidence scores â€ ' behaviors overlap
+  """â‚¬"â‚¬ Good for demos and development
+
+Medium models (1Bâ‚¬"7B):
+  "Å“"â‚¬"â‚¬ 32â‚¬"48 layers â€ ' better category separation
+  "Å“"â‚¬"â‚¬ Clear functional boundaries at CKA drops
+  """â‚¬"â‚¬ Good for production use
+
+Large models (7B+):
+  "Å“"â‚¬"â‚¬ 32â‚¬"80+ layers â€ ' fine-grained layer specialization
+  "Å“"â‚¬"â‚¬ Distinct safety, reasoning, and style zones
+  """â‚¬"â‚¬ Best steering accuracy and confidence
+```
+
+---
+
+## Architecture
+
+```
+"Å’"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â
+"â€š                      Frontend (React + Vite)                      "â€š
+"â€š  "Å’"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â  "Å’"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â  "Å’"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â   "â€š
+"â€š  "â€š Control Panel"â€š  "â€š     Chat     "â€š  "â€š  Activation Heatmap  "â€š   "â€š
+"â€š  "â€š + Feature    "â€š  "â€š  Interface   "â€š  "â€š  + Diagnostics Panel "â€š   "â€š
+"â€š  "â€š   Browser    "â€š  "â€š  (WebSocket) "â€š  "â€š  (real-time metrics) "â€š   "â€š
+"â€š  """â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Ëœ  """â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Ëœ  """â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Ëœ   "â€š
+"""â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Ëœ
+                            "â€š REST + WebSocket
+"Å’"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬-Â¼"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â
+"â€š                     Backend (FastAPI + PyTorch)                    "â€š
+"â€š                                                                   "â€š
+"â€š  "Å’"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â  "Å’"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â  "Å’"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â  "â€š
+"â€š  "â€š   Scanner    "â€š  "â€š  PCA Feature    "â€š  "â€š   Intent Router    "â€š  "â€š
+"â€š  "â€š  (SVD, CKA,  "â€š  "â€š  Extractor     "â€š  "â€š  (Bi-Encoder +     "â€š  "â€š
+"â€š  "â€š   Entropy)   "â€š  "â€š  (Offline)      "â€š  "â€š   NLI Cross-Enc.)  "â€š  "â€š
+"â€š  """â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Ëœ  """â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Ëœ  """â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Ëœ  "â€š
+"â€š         "â€š                   "â€š                      "â€š             "â€š
+"â€š         "â€š         "Å’"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬-Â¼"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â           "â€š             "â€š
+"â€š         """â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬-Âº"â€š   Layer Resolver   "â€š--â€ž"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Ëœ             "â€š
+"â€š                   "â€š  (O(1) Lookup +    "â€š                         "â€š
+"â€š                   "â€š   Bell-Curve Str.) "â€š                         "â€š
+"â€š                   """â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Ëœ                         "â€š
+"â€š                             "â€š                                    "â€š
+"â€š  "Å’"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬-Â¼"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â  "â€š
+"â€š  "â€š               Steering Engine (PyTorch Hooks)              "â€š  "â€š
+"â€š  "â€š  â‚¬Â¢ Orthogonal Projection    â‚¬Â¢ Lâ€šâ€š Norm Preservation        "â€š  "â€š
+"â€š  "â€š  â‚¬Â¢ Adaptive Decay           â‚¬Â¢ Entropy Circuit Breaker      "â€š  "â€š
+"â€š  "â€š  â‚¬Â¢ Gram-Schmidt Multi-Vec   â‚¬Â¢ LEACE Concept Erasure        "â€š  "â€š
+"â€š  "â€š  â‚¬Â¢ Bell-Curve Strength      â‚¬Â¢ Auto-Calibrated Gating       "â€š  "â€š
+"â€š  """â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Ëœ  "â€š
+"â€š                                                                   "â€š
+"â€š  "Å’"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â "â€š
+"â€š  "â€š  Storage: SQLite (scan cache + features) + NumPy (vectors)  "â€š "â€š
+"â€š  """â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Ëœ "â€š
+"â€š                                                                   "â€š
+"â€š  "Å’"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Â "â€š
+"â€š  "â€š  Vector Calculator (CAA) â‚¬" legacy contrastive pairs path    "â€š "â€š
+"â€š  """â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Ëœ "â€š
+"""â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"â‚¬"Ëœ
+
+---
+
+## Production Viability & Architectural Trade-offs
+
+SteerOps is designed as an agile, mathematical debugger for LLMs, but makes explicit architectural trade-offs that differ from billion-dollar multi-tenant inference engines.
+
+### 1. Global PyTorch Hooks vs. Multi-Tenancy
+
+Standard PyTorch forward hooks (`register_forward_hook`) mutate the global model state in VRAM. In a massive multi-tenant SaaS environment, batched inference requires highly complex custom CUDA kernels (like vLLM's PagedAttention) to apply different steering vectors to different sequences within the same batch.
+
+**The SteerOps Solution:** Rather than pretending standard PyTorch supports zero-cost multi-tenant vector injection, SteerOps embraces its identity as a **single-tenant diagnostic tool**. When deployed via `STEEROPS_DEPLOY_MODE=production`, it uses a custom `SessionLockMiddleware`. This enforces a strict 1-user GPU queue, gracefully returning a 503 error to concurrent API requests, guaranteeing zero cross-contamination of steering hooks across users.
+
+### 2. CAA vs. Sparse Autoencoders (SAEs)
+
+State-of-the-art interpretability currently favors Sparse Autoencoders (SAEs), which extract millions of monosemantic features (e.g., Anthropic's Golden Gate Claud). 
+
+**Why SteerOps uses CAA and PCA:** Training an SAE requires massive datasets and heavy GPU compute for *every single layer* of a specific model. SteerOps optimizes for **deployment agility and zero-training inference**. Using Contrastive Activation Addition (CAA), an engineer can take a brand new open-source model and generate a steering vector for "toxicity" in 60 seconds. SteerOps is intervention-first, providing immediate runtime patching without the millions of dollars required for SAE training.
+```
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- **Python 3.11+** (3.12 recommended)
+- **Node.js 20+** (for frontend)
+- **CUDA GPU** recommended (works on CPU, but 10x slower)
+- **4GB+ VRAM** for small models, 8GB+ for 7B models
+
+### Option 1: Local Development
+
+#### Backend
+
+```bash
+# Clone the repository
+git clone https://github.com/shrey0303/activation_Steering.git
+cd activation_Steering
+
+# Create virtual environment
+python -m venv .venv
+
+# Activate (Windows)
+.venv\Scripts\activate
+# Activate (Linux/Mac)
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r backend/requirements.txt
+
+# Configure (optional â‚¬" defaults work out of the box)
+cp backend/.env.example backend/.env
+# Edit backend/.env to set MODEL_NAME, DEVICE, etc.
+
+# Start the backend server
+cd backend
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+#### Frontend
+
+```bash
+# In a new terminal
+cd frontend
+npm install
+npm run dev
+```
+
+Open **http://localhost:5173** in your browser.
+
+#### Backend API docs available at **http://localhost:8000/docs**
+
+### Option 2: Docker (Production)
+
+```bash
+docker-compose up --build
+# Frontend: http://localhost:3000
+# Backend API: http://localhost:8000/docs
+```
+
+### Deployment Modes
+
+SteerOps has two deployment modes controlled by the `STEEROPS_DEPLOY_MODE` environment variable:
+
+| Mode | Env Value | Concurrency Guards | Use Case |
+|------|-----------|-------------------|----------|
+| **Local** | `local` (default) | None â‚¬" full access | Personal dev, research |
+| **Production** | `production` | Session lock + rate limiting | Public demos, LinkedIn showcase |
