@@ -98,3 +98,53 @@ Scanner completed in 59.8s across 28 layers.
 > **6/25 tests reached statistical significance.** Creativity d=1.24 at p=0.003 is the strongest result in the dataset. Politeness at strength 1.0 was the cleanest result â‚¬" d=-1.26, perplexity 1.14 (fluency intact).
 
 ### Creativity Dose-Response (7B)
+
+| Strength | Cohen's d | p-value | Perplexity | Significant |
+|----------|----------|---------|-----------|-------------|
+| 0.5 | 0.046 | 0.808 | 1.04 | ÂÅ’ |
+| 1.0 | 0.640 | 0.044 | 1.77 | Å“â€¦ |
+| 1.5 | 1.119 | 0.012 | 2.52 | Å“â€¦ |
+| 2.0 | 1.236 | 0.003 | 1.61 | Å“â€¦ |
+| 2.5 | 1.224 | 0.005 | 2.21 | Å“â€¦ |
+
+### Pipeline-Wide Metrics (7B)
+
+| Metric | Value |
+|--------|-------|
+| Semantic Shift (mean) | 0.445 |
+| Effect Size (mean \|d\|) | 0.542 Â± 0.416 |
+| Perplexity Ratio (mean) | 1.560 |
+| Significant tests | 6/25 |
+| Fluency Preserved | ÂÅ’ (above 1.15 threshold) |
+| Hooks Functional | Å“â€¦ |
+
+### Fluency Trade-off (7B)
+
+Above strength 1.5, coherence degrades on some concepts:
+
+| Concept | Strength | Perplexity | Significant | Usable? |
+|---------|----------|-----------|-------------|---------|
+| Creativity | 1.0 | 1.77 | Å“â€¦ | Å¡Â Ã¯Â¸Â |
+| Creativity | 1.5 | 2.52 | Å“â€¦ | ÂÅ’ |
+| Politeness | 1.0 | 1.14 | Å“â€¦ | Å“â€¦ |
+| Politeness | 1.5 | 1.40 | Å“â€¦ | Å¡Â Ã¯Â¸Â |
+| Refusal | 1.5 | 3.06 | ÂÅ’ | ÂÅ’ |
+
+**Practical operating range:** strength 1.0â‚¬"1.5 depending on concept. Politeness at 1.0 is the sweet spot â‚¬" significant effect with fluency genuinely intact.
+
+---
+
+## 7B Debugging History
+
+### Initial failure (0/25 significant)
+
+First 7B evaluation produced mean shift 0.004 â‚¬" steered outputs were byte-for-byte identical to baseline. Pipeline integrity checker correctly flagged: `steering_hooks_functional: false`.
+
+### Root cause
+
+Gating threshold and strength parameters were calibrated on 896-dimensional hidden space (0.5B). On 3584-dimensional space (7B):
+
+1. **Gating killed every hook call.** Auto-calibrated threshold `5/Ë†Å¡3584 = 0.084` was below the natural cosine similarity between 7B activations and concept-aligned steering vectors. Every hook returned output unmodified.
+2. **Perturbation was invisible.** `strength=2.5` on an activation with norm ~90 = ~2.8% perturbation. Below the threshold to change greedy argmax token.
+
+### Diagnostic
