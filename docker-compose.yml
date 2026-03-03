@@ -1,0 +1,38 @@
+version: '3.9'
+
+services:
+  backend:
+    build: ./backend
+    container_name: steerops-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/patches:/app/patches
+      - ./backend/logs:/app/logs
+      - model-cache:/root/.cache/huggingface
+    environment:
+      - MODEL_NAME=${MODEL_NAME:-TinyLlama/TinyLlama-1.1B-Chat-v1.0}
+      - DEVICE=${DEVICE:-auto}
+      - QUANTIZATION_ENABLED=${QUANTIZATION_ENABLED:-true}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./steerops.db}
+      - STEEROPS_DEPLOY_MODE=production
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: steerops-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  model-cache:
