@@ -22,31 +22,8 @@ HF_HUB_API = "https://huggingface.co/api/models"
 HF_INFERENCE_API = "https://router.huggingface.co/hf-inference/models"
 
 
-from app.core.scanner import CATEGORIES, BEHAVIORAL_ROLES
+from app.core.constants import CATEGORIES, BEHAVIORAL_ROLES, position_to_category
 
-
-def _position_to_category(relative_pos: float) -> str:
-    """Map relative position [0,1] to a research-backed category."""
-    if relative_pos < 0.05:
-        return "token_embedding"
-    elif relative_pos < 0.12:
-        return "positional_morphological"
-    elif relative_pos < 0.25:
-        return "syntactic_processing"
-    elif relative_pos < 0.40:
-        return "entity_semantic"
-    elif relative_pos < 0.55:
-        return "knowledge_retrieval"
-    elif relative_pos < 0.70:
-        return "reasoning_planning"
-    elif relative_pos < 0.78:
-        return "safety_alignment"
-    elif relative_pos < 0.88:
-        return "information_integration"
-    elif relative_pos < 0.95:
-        return "style_personality"
-    else:
-        return "output_distribution"
 
 
 class RemoteModelManager:
@@ -191,7 +168,7 @@ class RemoteModelManager:
         profiles = []
         for idx in range(n):
             pos = idx / max(n - 1, 1)
-            category = _position_to_category(pos)
+            category = position_to_category(pos)
 
             # Confidence is lower for remote scans (no weight analysis)
             base_confidence = 0.65

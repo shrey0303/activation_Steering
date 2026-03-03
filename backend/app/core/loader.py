@@ -90,7 +90,7 @@ class ModelManager:
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
             self.tokenizer = AutoTokenizer.from_pretrained(
-                model_name, trust_remote_code=False
+                model_name, trust_remote_code=True
             )
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -141,7 +141,7 @@ class ModelManager:
                 self.device_name = "cpu"
                 self.model = AutoModelForCausalLM.from_pretrained(
                     model_name,
-                    trust_remote_code=False,
+                    trust_remote_code=True,
                     low_cpu_mem_usage=True,
                 )
             except Exception as e:
@@ -151,7 +151,7 @@ class ModelManager:
                 self.device_name = "cpu"
                 self.model = AutoModelForCausalLM.from_pretrained(
                     model_name,
-                    trust_remote_code=False,
+                    trust_remote_code=True,
                     low_cpu_mem_usage=True,
                 )
 

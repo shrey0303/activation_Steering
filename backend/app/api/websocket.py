@@ -26,6 +26,7 @@ router = APIRouter()
 # Track active generation cancellation flags per connection
 _stop_flags: dict[int, bool] = {}
 _active_connections: int = 0
+_conn_lock = asyncio.Lock()
 
 
 @router.websocket("/api/v1/ws/generate")
@@ -36,12 +37,13 @@ async def websocket_generate(ws: WebSocket):
     global _active_connections
     settings = get_settings()
 
-    if _active_connections >= settings.ws_max_connections:
-        await ws.close(code=1013, reason="Server busy — max connections reached")
-        return
+    async with _conn_lock:
+        if _active_connections >= settings.ws_max_connections:
+            await ws.close(code=1013, reason="Server busy — max connections reached")
+            return
+        await ws.accept()
+        _active_connections += 1
 
-    await ws.accept()
-    _active_connections += 1
     conn_id = id(ws)
     _stop_flags[conn_id] = False
     logger.info(f"WebSocket client connected (active={_active_connections})")
@@ -86,7 +88,8 @@ async def websocket_generate(ws: WebSocket):
         except Exception:
             pass
     finally:
-        _active_connections = max(0, _active_connections - 1)
+        async with _conn_lock:
+            _active_connections = max(0, _active_connections - 1)
         _stop_flags.pop(conn_id, None)
         logger.info(f"WebSocket client cleaned up (active={_active_connections})")
 

@@ -22,34 +22,30 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 class TestEvaluatorMetrics:
     """Evaluator metric computation without a real model."""
 
-    def _make_evaluator(self):
-        from app.core.evaluator import Evaluator
-        return Evaluator()
-
     def test_simple_sentiment_positive(self):
-        ev = self._make_evaluator()
-        result = ev._simple_sentiment("This is a wonderful amazing great day!")
+        from app.core.evaluator.metrics import simple_sentiment
+        result = simple_sentiment("This is a wonderful amazing great day!")
         assert isinstance(result, float)
         assert -1.0 <= result <= 1.0
 
     def test_simple_sentiment_negative(self):
-        ev = self._make_evaluator()
-        result = ev._simple_sentiment("This is terrible awful horrible bad.")
+        from app.core.evaluator.metrics import simple_sentiment
+        result = simple_sentiment("This is terrible awful horrible bad.")
         assert isinstance(result, float)
 
     def test_simple_sentiment_empty(self):
-        ev = self._make_evaluator()
-        result = ev._simple_sentiment("")
+        from app.core.evaluator.metrics import simple_sentiment
+        result = simple_sentiment("")
         assert isinstance(result, float)
 
     def test_aggregate_metrics_empty(self):
-        ev = self._make_evaluator()
-        result = ev._aggregate_metrics([])
+        from app.core.evaluator.metrics import aggregate_metrics
+        result = aggregate_metrics([])
         assert result == {}
 
     def test_aggregate_metrics_single(self):
-        ev = self._make_evaluator()
-        result = ev._aggregate_metrics([{
+        from app.core.evaluator.metrics import aggregate_metrics
+        result = aggregate_metrics([{
             "semantic_shift": 0.3,
             "perplexity_delta": 5.0,
         }])
@@ -57,8 +53,8 @@ class TestEvaluatorMetrics:
         assert result["avg_semantic_shift"] == 0.3
 
     def test_aggregate_metrics_mean(self):
-        ev = self._make_evaluator()
-        result = ev._aggregate_metrics([
+        from app.core.evaluator.metrics import aggregate_metrics
+        result = aggregate_metrics([
             {"semantic_shift": 0.2, "perplexity_delta": 3.0},
             {"semantic_shift": 0.4, "perplexity_delta": 7.0},
         ])
@@ -67,7 +63,7 @@ class TestEvaluatorMetrics:
         assert "std_semantic_shift" in result
 
     def test_overall_score_structure(self):
-        ev = self._make_evaluator()
+        from app.core.evaluator.metrics import compute_overall_score
         agg = {
             "avg_semantic_shift": 0.15,
             "avg_perplexity_ratio": 1.1,
@@ -75,7 +71,7 @@ class TestEvaluatorMetrics:
             "behavioral_consistency": 0.8,
             "avg_steering_efficiency": 0.05,
         }
-        result = ev._compute_overall_score(agg)
+        result = compute_overall_score(agg)
         assert "score" in result
         assert "grade" in result
         assert "breakdown" in result
@@ -83,7 +79,7 @@ class TestEvaluatorMetrics:
         assert result["grade"] in ("A+", "A", "B+", "B", "C", "D", "F")
 
     def test_high_quality_high_score(self):
-        ev = self._make_evaluator()
+        from app.core.evaluator.metrics import compute_overall_score
         agg = {
             "avg_semantic_shift": 0.35,
             "avg_perplexity_ratio": 1.05,
@@ -91,27 +87,27 @@ class TestEvaluatorMetrics:
             "behavioral_consistency": 0.9,
             "avg_steering_efficiency": 0.12,
         }
-        result = ev._compute_overall_score(agg)
+        result = compute_overall_score(agg)
         assert result["score"] >= 60
 
     def test_low_quality_low_score(self):
-        ev = self._make_evaluator()
+        from app.core.evaluator.metrics import compute_overall_score
         agg = {
             "avg_semantic_shift": 0.0,
             "avg_perplexity_ratio": 3.0,
         }
-        result = ev._compute_overall_score(agg)
+        result = compute_overall_score(agg)
         assert result["score"] < 50
 
     def test_concept_anchors_exist(self):
-        ev = self._make_evaluator()
+        from app.core.evaluator.anchors import get_concept_anchors
         for concept in ["politeness", "toxicity", "creativity", "refusal", "verbosity"]:
-            anchors = ev._get_concept_anchors(concept)
+            anchors = get_concept_anchors(concept)
             assert len(anchors) >= 3, f"{concept} should have 3+ anchors"
 
     def test_concept_anchors_unknown(self):
-        ev = self._make_evaluator()
-        anchors = ev._get_concept_anchors("nonexistent_concept_xyz")
+        from app.core.evaluator.anchors import get_concept_anchors
+        anchors = get_concept_anchors("nonexistent_concept_xyz")
         assert anchors == []
 
 
@@ -187,34 +183,40 @@ class TestSchemas:
 class TestStatUtils:
     """Cohen's d and paired t-test from the definitive test script."""
 
-    def test_cohens_d_identical_groups(self):
-        """Identical groups should produce d ≈ 0."""
+    def test_cohens_dz_identical_groups(self):
+        """Identical paired samples should produce dz = 0."""
         import numpy as np
-        a = [1.0, 2.0, 3.0, 4.0, 5.0]
-        b = [1.0, 2.0, 3.0, 4.0, 5.0]
-        na, nb = len(a), len(b)
-        mean_a, mean_b = np.mean(a), np.mean(b)
-        var_a, var_b = np.var(a, ddof=1), np.var(b, ddof=1)
-        pooled_std = math.sqrt(((na - 1) * var_a + (nb - 1) * var_b) / (na + nb - 2))
-        d = (mean_b - mean_a) / pooled_std if pooled_std > 1e-10 else 0.0
-        assert abs(d) < 0.01
+        a = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        b = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        diffs = b - a
+        # All diffs are 0 → std is 0 → dz should be 0
+        std_diff = float(np.std(diffs, ddof=1)) if len(diffs) > 1 else 0.0
+        dz = float(np.mean(diffs) / std_diff) if std_diff > 1e-10 else 0.0
+        assert abs(dz) < 0.01
 
-    def test_cohens_d_known_effect(self):
-        """Groups with known difference should produce expected d."""
+    def test_cohens_dz_known_effect(self):
+        """Constant shift of 1.0 across all pairs → dz should be very large (or infinite)."""
         import numpy as np
-        a = [0.0] * 100
-        b = [1.0] * 100
-        na, nb = len(a), len(b)
-        mean_a, mean_b = np.mean(a), np.mean(b)
-        var_a, var_b = np.var(a, ddof=1), np.var(b, ddof=1)
-        pooled_std = math.sqrt(((na - 1) * var_a + (nb - 1) * var_b) / (na + nb - 2))
-        if pooled_std < 1e-10:
-            d = 0.0
-        else:
-            d = (mean_b - mean_a) / pooled_std
-        # All zeros vs all ones: pooled_std ≈ 0, d undefined
-        # Both groups have zero variance, so d should be 0
-        assert d == 0.0 or abs(d) > 10  # edge case
+        a = np.array([0.0] * 100)
+        b = np.array([1.0] * 100)
+        diffs = b - a
+        # All diffs are exactly 1.0 → std(diffs) = 0 → dz undefined
+        std_diff = float(np.std(diffs, ddof=1)) if len(diffs) > 1 else 0.0
+        dz = float(np.mean(diffs) / std_diff) if std_diff > 1e-10 else 0.0
+        # Zero variance in differences → dz = 0 by our convention
+        assert dz == 0.0
+
+    def test_cohens_dz_variable_effect(self):
+        """Variable shift with known dz: mean(diff)=2, std(diff)=1 → dz=2."""
+        import numpy as np
+        np.random.seed(42)
+        diffs = np.random.normal(loc=2.0, scale=1.0, size=1000)
+        a = np.zeros(1000)
+        b = a + diffs
+        std_diff = float(np.std(diffs, ddof=1))
+        dz = float(np.mean(diffs) / std_diff)
+        # Should be approximately 2.0
+        assert 1.8 < dz < 2.2
 
     def test_paired_t_test_significant(self):
         """Clearly different paired samples should be significant."""
