@@ -23,6 +23,8 @@ from typing import Any, Dict, List, Optional, Union
 
 logger = logging.getLogger("steerops")
 
+_STRENGTH_WARNING_THRESHOLD: float = 10.0
+
 
 @dataclass
 class Intervention:
@@ -194,7 +196,7 @@ class Patch:
                 warnings.append(
                     f"Layer {iv.layer} exceeds model layer count ({num_layers})"
                 )
-            if abs(iv.strength) > 10:
+            if abs(iv.strength) > _STRENGTH_WARNING_THRESHOLD:
                 warnings.append(
                     f"Layer {iv.layer} strength {iv.strength} is unusually high"
                 )

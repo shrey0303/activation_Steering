@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 
 from steerops.patch import Patch
 
+logger = logging.getLogger("steerops")
 
-def main():
+
+def main() -> None:
     parser = argparse.ArgumentParser(
         prog="steerops",
         description="SteerOps Activation Steering CLI",
@@ -67,13 +70,12 @@ def main():
         cmd_merge(args)
 
 
-def cmd_apply(args):
+def cmd_apply(args: argparse.Namespace) -> None:
     from steerops.steerer import Steerer
 
-    print(f"Loading patch: {args.patch}")
-    print(f"Loading model: {args.model}")
-    print(f"Prompt: {args.prompt}")
-    print()
+    logger.info("Loading patch: %s", args.patch)
+    logger.info("Loading model: %s", args.model)
+    logger.info("Prompt: %s", args.prompt)
 
     text = Steerer.run(
         patch_path=args.patch,
@@ -84,17 +86,16 @@ def cmd_apply(args):
         quantize=args.quantize,
     )
 
-    print("-" * 60)
-    print("Generated output:")
-    print("-" * 60)
-    print(text)
+    sys.stdout.write("-" * 60 + "\n")
+    sys.stdout.write("Generated output:\n")
+    sys.stdout.write("-" * 60 + "\n")
+    sys.stdout.write(text + "\n")
 
 
-def cmd_info(args):
+def cmd_info(args: argparse.Namespace) -> None:
     patch = Patch.from_file(args.patch)
-    print(patch.summary())
-    print()
-    print(f"Description: {patch.description or '(none)'}")
+    sys.stdout.write(patch.summary() + "\n\n")
+    sys.stdout.write(f"Description: {patch.description or '(none)'}\n")
 
     for iv in patch.interventions:
         vec_info = "None"
@@ -103,30 +104,38 @@ def cmd_info(args):
                 f"dim={len(iv.direction_vector)}, "
                 f"norm={sum(v**2 for v in iv.direction_vector)**0.5:.4f}"
             )
-        print(f"  Layer {iv.layer}: strength={iv.strength:+.2f}, vector={vec_info}")
+        sys.stdout.write(
+            f"  Layer {iv.layer}: strength={iv.strength:+.2f}, "
+            f"vector={vec_info}\n"
+        )
 
 
-def cmd_validate(args):
+def cmd_validate(args: argparse.Namespace) -> None:
     patch = Patch.from_file(args.patch)
     warnings = patch.validate_for_model(args.layers)
 
     if not warnings:
-        print(f"Patch '{patch.name}' is valid for {args.layers}-layer model")
+        logger.info(
+            "Patch '%s' is valid for %d-layer model",
+            patch.name, args.layers,
+        )
     else:
-        print(f"Patch '{patch.name}' has {len(warnings)} warning(s):")
+        logger.warning(
+            "Patch '%s' has %d warning(s):", patch.name, len(warnings),
+        )
         for w in warnings:
-            print(f"  - {w}")
+            logger.warning("  - %s", w)
         sys.exit(1)
 
 
-def cmd_merge(args):
+def cmd_merge(args: argparse.Namespace) -> None:
     patches = [Patch.from_file(p) for p in args.patches]
     merged = Patch.merge(patches, name=args.name, strategy=args.strategy)
     merged.save(args.output)
 
-    print(f"Merged {len(patches)} patches -> {args.output}")
-    print(f"   Strategy: {args.strategy}")
-    print(f"   Interventions: {len(merged.interventions)}")
+    logger.info("Merged %d patches -> %s", len(patches), args.output)
+    logger.info("   Strategy: %s", args.strategy)
+    logger.info("   Interventions: %d", len(merged.interventions))
 
 
 if __name__ == "__main__":

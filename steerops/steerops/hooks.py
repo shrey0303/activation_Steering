@@ -17,6 +17,8 @@ import torch.nn as nn
 
 logger = logging.getLogger("steerops")
 
+_MEAN_SHIFT_SCALE: float = 0.1
+
 
 @dataclass
 class HookHandle:
@@ -68,7 +70,7 @@ class HookManager:
                     hidden = hidden + strength * vec
                 else:
                     mean_act = hidden.mean(dim=-1, keepdim=True)
-                    hidden = hidden + strength * 0.1 * mean_act
+                    hidden = hidden + strength * _MEAN_SHIFT_SCALE * mean_act
 
             if isinstance(output, tuple):
                 return (hidden,) + output[1:]
