@@ -369,8 +369,8 @@ This guarantees each vector steers an **independent axis** with zero interferenc
 In high-dimensional spaces (4096D for Llama-3), cosine similarity naturally shrinks toward zero. Gate threshold is auto-calibrated:
 
 ```python
-gate_threshold = 2.0 / sqrt(hidden_dim)
-# 768D → 0.072,  4096D → 0.031
+gate_threshold = 3.0 / sqrt(hidden_dim)
+# 768D → 0.108,  4096D → 0.047
 ```
 
 **Safety Features:**
@@ -743,9 +743,10 @@ SteerOps ships a standalone Python library for programmatic patch application:
 ### Installation
 
 ```bash
-pip install steerops
+# Install from local source (not yet on PyPI)
+pip install ./steerops
 # With evaluation metrics:
-pip install steerops[eval]
+pip install ./steerops[eval]
 ```
 
 ### Usage
@@ -874,9 +875,9 @@ SteerOps evaluates steering quality using 6 metrics:
 | **Semantic Shift** | 25% | Cosine distance between steered and unsteered outputs (sentence embeddings) |
 | **Concept Alignment** | 25% | Cosine similarity of steered output to target concept anchor |
 | **Perplexity Delta** | 15% | Change in output fluency — lower delta = better coherence preservation |
-| **Behavioral Consistency** | 15% | Stability across multiple prompts — std of per-prompt scores |
+| **Behavioral Consistency** | 15% | Stability across multiple prompts — std of per-prompt concept alignment scores |
 | **Steering Efficiency** | 10% | Semantic shift achieved per unit of steering strength |
-| **Format Preservation** | 10% | Whether output maintains expected length and structure |
+| **Sentiment Shift** | 10% | Change in TextBlob sentiment polarity between baseline and steered output |
 
 ### Scoring
 
