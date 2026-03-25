@@ -1,0 +1,1098 @@
+{
+  "title": "SteerOps Deep Evaluation v2 — Sarvam-1 Tamil Control Experiment",
+  "timestamp": "2026-04-19T13:24:58",
+  "model": "sarvamai/sarvam-1",
+  "evaluation_config": {
+    "n_eval_prompts": 40,
+    "n_bootstrap": 2000,
+    "ci_alpha": 0.05,
+    "strengths": [
+      0.5,
+      1.0,
+      1.5,
+      2.0,
+      2.5,
+      3.0
+    ]
+  },
+  "vector_magnitudes": {
+    "hindi": 4.507132530212402,
+    "bengali": 8.421463966369629,
+    "tamil_native": 7.98383903503418
+  },
+  "results": {
+    "hindi_honorific": {
+      "concept": "hindi_honorific",
+      "phase": "hindi_n40",
+      "routing_layer": 6,
+      "n_prompts": 40,
+      "sweep": [
+        {
+          "strength": 0.5,
+          "concept_alignment_delta": {
+            "mean": 0.0182,
+            "std": 0.1381
+          },
+          "semantic_shift": {
+            "mean": 0.3847,
+            "std": 0.2858
+          },
+          "perplexity_ratio": {
+            "mean": 1.3986
+          },
+          "statistical_test": {
+            "cohens_d": 0.1353,
+            "cohens_d_ci_95": {
+              "ci_lower": -0.1595,
+              "ci_upper": 0.4667,
+              "ci_width": 0.6262
+            },
+            "paired_t_test": {
+              "p_value": 0.4093,
+              "significant": "False"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.8208
+            },
+            "token_fertility_steered": {
+              "mean": 1.5253
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 436.3
+        },
+        {
+          "strength": 1.0,
+          "concept_alignment_delta": {
+            "mean": 0.0305,
+            "std": 0.1282
+          },
+          "semantic_shift": {
+            "mean": 0.5077,
+            "std": 0.2272
+          },
+          "perplexity_ratio": {
+            "mean": 1.4235
+          },
+          "statistical_test": {
+            "cohens_d": 0.2524,
+            "cohens_d_ci_95": {
+              "ci_lower": -0.0657,
+              "ci_upper": 0.5938,
+              "ci_width": 0.6595
+            },
+            "paired_t_test": {
+              "p_value": 0.1403,
+              "significant": "False"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.7
+            },
+            "token_fertility_steered": {
+              "mean": 2.2888
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 421.7
+        },
+        {
+          "strength": 1.5,
+          "concept_alignment_delta": {
+            "mean": 0.0585,
+            "std": 0.1278
+          },
+          "semantic_shift": {
+            "mean": 0.5993,
+            "std": 0.1955
+          },
+          "perplexity_ratio": {
+            "mean": 2.9367
+          },
+          "statistical_test": {
+            "cohens_d": 0.4708,
+            "cohens_d_ci_95": {
+              "ci_lower": 0.1838,
+              "ci_upper": 0.7749,
+              "ci_width": 0.5911
+            },
+            "paired_t_test": {
+              "p_value": 0.0061,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.7
+            },
+            "token_fertility_steered": {
+              "mean": 1.7087
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 411.5
+        },
+        {
+          "strength": 2.0,
+          "concept_alignment_delta": {
+            "mean": 0.1679,
+            "std": 0.1894
+          },
+          "semantic_shift": {
+            "mean": 0.6686,
+            "std": 0.1766
+          },
+          "perplexity_ratio": {
+            "mean": 2.2287
+          },
+          "statistical_test": {
+            "cohens_d": 1.1956,
+            "cohens_d_ci_95": {
+              "ci_lower": 0.8071,
+              "ci_upper": 1.6607,
+              "ci_width": 0.8536
+            },
+            "paired_t_test": {
+              "p_value": 0.0,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.85
+            },
+            "token_fertility_steered": {
+              "mean": 2.3273
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 414.0
+        },
+        {
+          "strength": 2.5,
+          "concept_alignment_delta": {
+            "mean": 0.2251,
+            "std": 0.1575
+          },
+          "semantic_shift": {
+            "mean": 0.7054,
+            "std": 0.1681
+          },
+          "perplexity_ratio": {
+            "mean": 1.8608
+          },
+          "statistical_test": {
+            "cohens_d": 1.6036,
+            "cohens_d_ci_95": {
+              "ci_lower": 1.1997,
+              "ci_upper": 2.1667,
+              "ci_width": 0.967
+            },
+            "paired_t_test": {
+              "p_value": 0.0,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.925
+            },
+            "token_fertility_steered": {
+              "mean": 1.7991
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 423.5
+        },
+        {
+          "strength": 3.0,
+          "concept_alignment_delta": {
+            "mean": 0.2528,
+            "std": 0.1942
+          },
+          "semantic_shift": {
+            "mean": 0.7314,
+            "std": 0.1975
+          },
+          "perplexity_ratio": {
+            "mean": 2.2791
+          },
+          "statistical_test": {
+            "cohens_d": 1.7455,
+            "cohens_d_ci_95": {
+              "ci_lower": 1.2855,
+              "ci_upper": 2.3776,
+              "ci_width": 1.0921
+            },
+            "paired_t_test": {
+              "p_value": 0.0,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.9
+            },
+            "token_fertility_steered": {
+              "mean": 1.8172
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 420.3
+        }
+      ],
+      "total_time_s": 2527.2
+    },
+    "bengali_honorific": {
+      "concept": "bengali_honorific",
+      "phase": "bengali_n40",
+      "routing_layer": 6,
+      "n_prompts": 40,
+      "sweep": [
+        {
+          "strength": 0.5,
+          "concept_alignment_delta": {
+            "mean": -0.0921,
+            "std": 0.2676
+          },
+          "semantic_shift": {
+            "mean": 0.4032,
+            "std": 0.2991
+          },
+          "perplexity_ratio": {
+            "mean": 1.3219
+          },
+          "statistical_test": {
+            "cohens_d": -0.3987,
+            "cohens_d_ci_95": {
+              "ci_lower": -0.8009,
+              "ci_upper": -0.0436,
+              "ci_width": 0.7573
+            },
+            "paired_t_test": {
+              "p_value": 0.0357,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.6725
+            },
+            "token_fertility_steered": {
+              "mean": 1.7449
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 440.9
+        },
+        {
+          "strength": 1.0,
+          "concept_alignment_delta": {
+            "mean": -0.2898,
+            "std": 0.2461
+          },
+          "semantic_shift": {
+            "mean": 0.6074,
+            "std": 0.2262
+          },
+          "perplexity_ratio": {
+            "mean": 1.4276
+          },
+          "statistical_test": {
+            "cohens_d": -1.3606,
+            "cohens_d_ci_95": {
+              "ci_lower": -1.9936,
+              "ci_upper": -0.9143,
+              "ci_width": 1.0793
+            },
+            "paired_t_test": {
+              "p_value": 0.0,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.5729
+            },
+            "token_fertility_steered": {
+              "mean": 2.0293
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 440.5
+        },
+        {
+          "strength": 1.5,
+          "concept_alignment_delta": {
+            "mean": -0.3008,
+            "std": 0.2603
+          },
+          "semantic_shift": {
+            "mean": 0.6309,
+            "std": 0.1729
+          },
+          "perplexity_ratio": {
+            "mean": 1.2648
+          },
+          "statistical_test": {
+            "cohens_d": -1.6259,
+            "cohens_d_ci_95": {
+              "ci_lower": -2.5158,
+              "ci_upper": -1.0301,
+              "ci_width": 1.4857
+            },
+            "paired_t_test": {
+              "p_value": 0.0,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.55
+            },
+            "token_fertility_steered": {
+              "mean": 2.788
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 431.0
+        },
+        {
+          "strength": 2.0,
+          "concept_alignment_delta": {
+            "mean": -0.2756,
+            "std": 0.2672
+          },
+          "semantic_shift": {
+            "mean": 0.6605,
+            "std": 0.2032
+          },
+          "perplexity_ratio": {
+            "mean": 1.4577
+          },
+          "statistical_test": {
+            "cohens_d": -1.3737,
+            "cohens_d_ci_95": {
+              "ci_lower": -2.1067,
+              "ci_upper": -0.8469,
+              "ci_width": 1.2598
+            },
+            "paired_t_test": {
+              "p_value": 0.0,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.55
+            },
+            "token_fertility_steered": {
+              "mean": 2.7924
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 422.0
+        },
+        {
+          "strength": 2.5,
+          "concept_alignment_delta": {
+            "mean": -0.2519,
+            "std": 0.2824
+          },
+          "semantic_shift": {
+            "mean": 0.6258,
+            "std": 0.1985
+          },
+          "perplexity_ratio": {
+            "mean": 1.3933
+          },
+          "statistical_test": {
+            "cohens_d": -1.2388,
+            "cohens_d_ci_95": {
+              "ci_lower": -1.9507,
+              "ci_upper": -0.7365,
+              "ci_width": 1.2142
+            },
+            "paired_t_test": {
+              "p_value": 0.0,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.5875
+            },
+            "token_fertility_steered": {
+              "mean": 3.0449
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 440.1
+        },
+        {
+          "strength": 3.0,
+          "concept_alignment_delta": {
+            "mean": -0.1655,
+            "std": 0.3329
+          },
+          "semantic_shift": {
+            "mean": 0.5878,
+            "std": 0.2653
+          },
+          "perplexity_ratio": {
+            "mean": 1.7976
+          },
+          "statistical_test": {
+            "cohens_d": -0.6928,
+            "cohens_d_ci_95": {
+              "ci_lower": -1.2295,
+              "ci_upper": -0.217,
+              "ci_width": 1.0125
+            },
+            "paired_t_test": {
+              "p_value": 0.0032,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.6225
+            },
+            "token_fertility_steered": {
+              "mean": 2.4052
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 436.5
+        }
+      ],
+      "total_time_s": 2611.1
+    },
+    "tamil_cross_lingual": {
+      "concept": "tamil_honorific",
+      "phase": "tamil_cross_n40",
+      "routing_layer": 6,
+      "n_prompts": 40,
+      "sweep": [
+        {
+          "strength": 0.5,
+          "concept_alignment_delta": {
+            "mean": -0.2664,
+            "std": 0.4055
+          },
+          "semantic_shift": {
+            "mean": 0.4676,
+            "std": 0.3548
+          },
+          "perplexity_ratio": {
+            "mean": 1.7474
+          },
+          "statistical_test": {
+            "cohens_d": -0.8487,
+            "cohens_d_ci_95": {
+              "ci_lower": -1.3217,
+              "ci_upper": -0.4591,
+              "ci_width": 0.8626
+            },
+            "paired_t_test": {
+              "p_value": 0.0002,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.725
+            },
+            "token_fertility_steered": {
+              "mean": 1.9136
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 410.9
+        },
+        {
+          "strength": 1.0,
+          "concept_alignment_delta": {
+            "mean": -0.4692,
+            "std": 0.3784
+          },
+          "semantic_shift": {
+            "mean": 0.6788,
+            "std": 0.2594
+          },
+          "perplexity_ratio": {
+            "mean": 2.9417
+          },
+          "statistical_test": {
+            "cohens_d": -1.7611,
+            "cohens_d_ci_95": {
+              "ci_lower": -2.781,
+              "ci_upper": -1.1179,
+              "ci_width": 1.6631
+            },
+            "paired_t_test": {
+              "p_value": 0.0,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.55
+            },
+            "token_fertility_steered": {
+              "mean": 1.7082
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 350.4
+        },
+        {
+          "strength": 1.5,
+          "concept_alignment_delta": {
+            "mean": -0.4457,
+            "std": 0.3936
+          },
+          "semantic_shift": {
+            "mean": 0.6895,
+            "std": 0.222
+          },
+          "perplexity_ratio": {
+            "mean": 2.817
+          },
+          "statistical_test": {
+            "cohens_d": -1.7393,
+            "cohens_d_ci_95": {
+              "ci_lower": -2.8462,
+              "ci_upper": -1.0798,
+              "ci_width": 1.7664
+            },
+            "paired_t_test": {
+              "p_value": 0.0,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.5375
+            },
+            "token_fertility_steered": {
+              "mean": 1.8296
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 358.9
+        },
+        {
+          "strength": 2.0,
+          "concept_alignment_delta": {
+            "mean": -0.256,
+            "std": 0.3816
+          },
+          "semantic_shift": {
+            "mean": 0.5341,
+            "std": 0.2423
+          },
+          "perplexity_ratio": {
+            "mean": 3.2677
+          },
+          "statistical_test": {
+            "cohens_d": -0.9852,
+            "cohens_d_ci_95": {
+              "ci_lower": -1.6156,
+              "ci_upper": -0.4971,
+              "ci_width": 1.1185
+            },
+            "paired_t_test": {
+              "p_value": 0.0001,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.6125
+            },
+            "token_fertility_steered": {
+              "mean": 2.2309
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 378.4
+        },
+        {
+          "strength": 2.5,
+          "concept_alignment_delta": {
+            "mean": -0.116,
+            "std": 0.3095
+          },
+          "semantic_shift": {
+            "mean": 0.4082,
+            "std": 0.2211
+          },
+          "perplexity_ratio": {
+            "mean": 2.861
+          },
+          "statistical_test": {
+            "cohens_d": -0.5339,
+            "cohens_d_ci_95": {
+              "ci_lower": -1.1433,
+              "ci_upper": -0.0962,
+              "ci_width": 1.0471
+            },
+            "paired_t_test": {
+              "p_value": 0.0228,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.6625
+            },
+            "token_fertility_steered": {
+              "mean": 3.0923
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 430.2
+        },
+        {
+          "strength": 3.0,
+          "concept_alignment_delta": {
+            "mean": -0.1238,
+            "std": 0.2949
+          },
+          "semantic_shift": {
+            "mean": 0.3895,
+            "std": 0.2347
+          },
+          "perplexity_ratio": {
+            "mean": 3.725
+          },
+          "statistical_test": {
+            "cohens_d": -0.5723,
+            "cohens_d_ci_95": {
+              "ci_lower": -1.1241,
+              "ci_upper": -0.1371,
+              "ci_width": 0.987
+            },
+            "paired_t_test": {
+              "p_value": 0.0114,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.725
+            },
+            "token_fertility_steered": {
+              "mean": 7.0248
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 431.0
+        }
+      ],
+      "total_time_s": 2359.9
+    },
+    "tamil_native": {
+      "concept": "tamil_honorific",
+      "phase": "tamil_native_n40",
+      "routing_layer": 6,
+      "n_prompts": 40,
+      "sweep": [
+        {
+          "strength": 0.5,
+          "concept_alignment_delta": {
+            "mean": -0.2341,
+            "std": 0.3409
+          },
+          "semantic_shift": {
+            "mean": 0.4294,
+            "std": 0.3462
+          },
+          "perplexity_ratio": {
+            "mean": 1.3236
+          },
+          "statistical_test": {
+            "cohens_d": -0.8194,
+            "cohens_d_ci_95": {
+              "ci_lower": -1.2478,
+              "ci_upper": -0.4518,
+              "ci_width": 0.796
+            },
+            "paired_t_test": {
+              "p_value": 0.0001,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.625
+            },
+            "token_fertility_steered": {
+              "mean": 2.1013
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 438.3
+        },
+        {
+          "strength": 1.0,
+          "concept_alignment_delta": {
+            "mean": -0.3432,
+            "std": 0.3637
+          },
+          "semantic_shift": {
+            "mean": 0.562,
+            "std": 0.298
+          },
+          "perplexity_ratio": {
+            "mean": 1.922
+          },
+          "statistical_test": {
+            "cohens_d": -1.2396,
+            "cohens_d_ci_95": {
+              "ci_lower": -1.8462,
+              "ci_upper": -0.8039,
+              "ci_width": 1.0423
+            },
+            "paired_t_test": {
+              "p_value": 0.0,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.5375
+            },
+            "token_fertility_steered": {
+              "mean": 2.1192
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 403.4
+        },
+        {
+          "strength": 1.5,
+          "concept_alignment_delta": {
+            "mean": -0.3393,
+            "std": 0.3928
+          },
+          "semantic_shift": {
+            "mean": 0.5748,
+            "std": 0.2775
+          },
+          "perplexity_ratio": {
+            "mean": 1.9498
+          },
+          "statistical_test": {
+            "cohens_d": -1.2833,
+            "cohens_d_ci_95": {
+              "ci_lower": -1.9817,
+              "ci_upper": -0.7732,
+              "ci_width": 1.2085
+            },
+            "paired_t_test": {
+              "p_value": 0.0,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.5125
+            },
+            "token_fertility_steered": {
+              "mean": 2.2283
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 419.4
+        },
+        {
+          "strength": 2.0,
+          "concept_alignment_delta": {
+            "mean": -0.3311,
+            "std": 0.3895
+          },
+          "semantic_shift": {
+            "mean": 0.59,
+            "std": 0.2753
+          },
+          "perplexity_ratio": {
+            "mean": 1.8554
+          },
+          "statistical_test": {
+            "cohens_d": -1.2823,
+            "cohens_d_ci_95": {
+              "ci_lower": -2.0508,
+              "ci_upper": -0.7357,
+              "ci_width": 1.3151
+            },
+            "paired_t_test": {
+              "p_value": 0.0,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.5125
+            },
+            "token_fertility_steered": {
+              "mean": 2.459
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 427.2
+        },
+        {
+          "strength": 2.5,
+          "concept_alignment_delta": {
+            "mean": -0.463,
+            "std": 0.4116
+          },
+          "semantic_shift": {
+            "mean": 0.6744,
+            "std": 0.2755
+          },
+          "perplexity_ratio": {
+            "mean": 3.0386
+          },
+          "statistical_test": {
+            "cohens_d": -1.7026,
+            "cohens_d_ci_95": {
+              "ci_lower": -2.6773,
+              "ci_upper": -1.0765,
+              "ci_width": 1.6008
+            },
+            "paired_t_test": {
+              "p_value": 0.0,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.625
+            },
+            "token_fertility_steered": {
+              "mean": 2.1027
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 411.1
+        },
+        {
+          "strength": 3.0,
+          "concept_alignment_delta": {
+            "mean": -0.6199,
+            "std": 0.2585
+          },
+          "semantic_shift": {
+            "mean": 0.8182,
+            "std": 0.1426
+          },
+          "perplexity_ratio": {
+            "mean": 4.71
+          },
+          "statistical_test": {
+            "cohens_d": -3.4131,
+            "cohens_d_ci_95": {
+              "ci_lower": -5.2457,
+              "ci_upper": -2.5341,
+              "ci_width": 2.7116
+            },
+            "paired_t_test": {
+              "p_value": 0.0,
+              "significant": "True"
+            }
+          },
+          "honorific_metrics": {
+            "steered_polite_ratio": {
+              "mean": 0.8
+            },
+            "token_fertility_steered": {
+              "mean": 1.765
+            }
+          },
+          "n_prompts": 40,
+          "eval_time_s": 395.7
+        }
+      ],
+      "total_time_s": 2495.3
+    }
+  },
+  "layer_responsiveness": {
+    "hindi_honorific__hindi_vec": [
+      {
+        "layer": 4,
+        "relative_depth": 0.14,
+        "semantic_shift": 0.5326,
+        "perplexity_ratio": 1.5998
+      },
+      {
+        "layer": 8,
+        "relative_depth": 0.29,
+        "semantic_shift": 0.5267,
+        "perplexity_ratio": 1.0466
+      },
+      {
+        "layer": 12,
+        "relative_depth": 0.43,
+        "semantic_shift": 0.7317,
+        "perplexity_ratio": 2.5708
+      },
+      {
+        "layer": 16,
+        "relative_depth": 0.57,
+        "semantic_shift": 0.6388,
+        "perplexity_ratio": 3.1562
+      },
+      {
+        "layer": 21,
+        "relative_depth": 0.75,
+        "semantic_shift": 0.5563,
+        "perplexity_ratio": 1.2946
+      },
+      {
+        "layer": 25,
+        "relative_depth": 0.89,
+        "semantic_shift": 0.6452,
+        "perplexity_ratio": 1.7986
+      }
+    ],
+    "bengali_honorific__bengali_vec": [
+      {
+        "layer": 4,
+        "relative_depth": 0.14,
+        "semantic_shift": 0.6825,
+        "perplexity_ratio": 1.3201
+      },
+      {
+        "layer": 8,
+        "relative_depth": 0.29,
+        "semantic_shift": 0.6613,
+        "perplexity_ratio": 2.384
+      },
+      {
+        "layer": 12,
+        "relative_depth": 0.43,
+        "semantic_shift": 0.7799,
+        "perplexity_ratio": 1.6437
+      },
+      {
+        "layer": 16,
+        "relative_depth": 0.57,
+        "semantic_shift": 0.6592,
+        "perplexity_ratio": 2.2984
+      },
+      {
+        "layer": 21,
+        "relative_depth": 0.75,
+        "semantic_shift": 0.382,
+        "perplexity_ratio": 1.3751
+      },
+      {
+        "layer": 25,
+        "relative_depth": 0.89,
+        "semantic_shift": 0.3268,
+        "perplexity_ratio": 1.5074
+      }
+    ],
+    "tamil_honorific__tamil_native_vec": [
+      {
+        "layer": 4,
+        "relative_depth": 0.14,
+        "semantic_shift": 0.6427,
+        "perplexity_ratio": 8.7817
+      },
+      {
+        "layer": 8,
+        "relative_depth": 0.29,
+        "semantic_shift": 0.7257,
+        "perplexity_ratio": 1.402
+      },
+      {
+        "layer": 12,
+        "relative_depth": 0.43,
+        "semantic_shift": 0.9249,
+        "perplexity_ratio": 1.3496
+      },
+      {
+        "layer": 16,
+        "relative_depth": 0.57,
+        "semantic_shift": 0.4771,
+        "perplexity_ratio": 1.7246
+      },
+      {
+        "layer": 21,
+        "relative_depth": 0.75,
+        "semantic_shift": 0.5075,
+        "perplexity_ratio": 1.7042
+      },
+      {
+        "layer": 25,
+        "relative_depth": 0.89,
+        "semantic_shift": 0.1827,
+        "perplexity_ratio": 1.6557
+      }
+    ],
+    "tamil_cross__hindi_for_tamil_vec": [
+      {
+        "layer": 4,
+        "relative_depth": 0.14,
+        "semantic_shift": 0.4945,
+        "perplexity_ratio": 1.5446
+      },
+      {
+        "layer": 8,
+        "relative_depth": 0.29,
+        "semantic_shift": 0.3477,
+        "perplexity_ratio": 1.1425
+      },
+      {
+        "layer": 12,
+        "relative_depth": 0.43,
+        "semantic_shift": 0.6079,
+        "perplexity_ratio": 3.4024
+      },
+      {
+        "layer": 16,
+        "relative_depth": 0.57,
+        "semantic_shift": 0.7857,
+        "perplexity_ratio": 2.9483
+      },
+      {
+        "layer": 21,
+        "relative_depth": 0.75,
+        "semantic_shift": 0.5056,
+        "perplexity_ratio": 3.9871
+      },
+      {
+        "layer": 25,
+        "relative_depth": 0.89,
+        "semantic_shift": 0.4519,
+        "perplexity_ratio": 1.1938
+      }
+    ]
+  },
+  "research_questions": {
+    "Q2_vector_origin": {
+      "vector_origin_hypothesis": "INCONCLUSIVE",
+      "cross_lingual_best_ppl": 1.7474,
+      "native_best_ppl": 1.3236,
+      "ppl_ratio_cross_vs_native": 1.3202,
+      "conclusion": "Results are ambiguous. Native PPL=1.32, Cross PPL=1.75. Neither clearly confirms nor rejects the hypothesis."
+    },
+    "Q5_subspace_orthogonality": {
+      "cross_vector_cosine_similarities": {
+        "cos_hindi_tamil": 0.6436,
+        "cos_bengali_tamil": 0.7652,
+        "cos_hindi_bengali": 0.7065
+      },
+      "subspace_orthogonality": "REJECTED",
+      "conclusion": "Hindi and Tamil vectors share significant subspace overlap (cos=0.6436 > 0.3). The degradation is not explained by orthogonality.",
+      "indo_aryan_alignment": "Hindi-Bengali cos=0.7065 vs Hindi-Tamil cos=0.6436. Indo-Aryan languages are more aligned with each other than with Dravidian."
+    }
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "title": "SteerOps Definitive Pipeline Test — 0.5B (Engine v2)",
+  "timestamp": "2026-04-12T00:00:00",
+  "model": "Qwen/Qwen2.5-0.5B",
+  "model_layers": 24,
+  "scan_time_s": 10.13,
+  "total_execution_time_s": 870.5,
+  "concepts_tested": 5,
+  "prompts_per_concept": 10,
+  "strength_sweep": [0.5, 1.0, 1.5, 2.0, 2.5],
+  "results": [
+    {
+      "concept": "toxicity",
+      "display": "Toxicity Reduction",
+      "routing": {"layer": 13, "category": "safety_alignment", "confidence": 0.95},
+      "caa_vector": {"dimension": 896, "magnitude": 1.3967},
+      "sweep": [
+        {"strength": -2.0, "semantic_shift": {"mean": 0.5466, "std": 0.2382}, "concept_alignment_delta": {"mean": -0.0052, "std": 0.1016}, "perplexity_ratio": {"mean": 1.5745}, "statistical_test": {"cohens_d": 0.1837, "paired_t_test": {"p_value": 0.5756, "significant": false}}},
+        {"strength": -1.0, "semantic_shift": {"mean": 0.4698, "std": 0.2927}, "concept_alignment_delta": {"mean": -0.0260, "std": 0.1633}, "perplexity_ratio": {"mean": 0.9357}, "statistical_test": {"cohens_d": -0.5765, "paired_t_test": {"p_value": 0.1016, "significant": false}}},
+        {"strength": 0.0, "semantic_shift": {"mean": 0.0, "std": 0.0}, "concept_alignment_delta": {"mean": 0.0, "std": 0.0}, "perplexity_ratio": {"mean": 1.0}, "statistical_test": {"cohens_d": 0.0, "paired_t_test": {"p_value": null, "significant": false}}},
+        {"strength": 1.0, "semantic_shift": {"mean": 0.7646, "std": 0.1629}, "concept_alignment_delta": {"mean": 0.0036, "std": 0.1849}, "perplexity_ratio": {"mean": 2.1225}, "statistical_test": {"cohens_d": 0.4550, "paired_t_test": {"p_value": 0.1841, "significant": false}}},
+        {"strength": 2.0, "semantic_shift": {"mean": 0.7920, "std": 0.1521}, "concept_alignment_delta": {"mean": -0.0276, "std": 0.1756}, "perplexity_ratio": {"mean": 1.6753}, "statistical_test": {"cohens_d": 0.6244, "paired_t_test": {"p_value": 0.0798, "significant": false}}}
+      ]
+    },
+    {
+      "concept": "politeness",
+      "display": "Politeness Enhancement",
+      "routing": {"layer": 11, "category": "knowledge_retrieval", "confidence": 0.95},
+      "caa_vector": {"dimension": 896, "magnitude": 2.1819},
+      "sweep": [
+        {"strength": 0.5, "semantic_shift": {"mean": 0.2601, "std": 0.2458}, "concept_alignment_delta": {"mean": 0.0283, "std": 0.1221}, "perplexity_ratio": {"mean": 1.0081}, "statistical_test": {"cohens_d": 0.2314, "paired_t_test": {"p_value": 0.4829, "significant": false}}},
+        {"strength": 1.0, "semantic_shift": {"mean": 0.3829, "std": 0.2858}, "concept_alignment_delta": {"mean": 0.0347, "std": 0.0956}, "perplexity_ratio": {"mean": 1.1836}, "statistical_test": {"cohens_d": 0.3623, "paired_t_test": {"p_value": 0.2815, "significant": false}}},
+        {"strength": 1.5, "semantic_shift": {"mean": 0.3679, "std": 0.2686}, "concept_alignment_delta": {"mean": 0.0562, "std": 0.1031}, "perplexity_ratio": {"mean": 1.4020}, "statistical_test": {"cohens_d": 0.5452, "paired_t_test": {"p_value": 0.1188, "significant": false}}},
+        {"strength": 2.0, "semantic_shift": {"mean": 0.5082, "std": 0.2623}, "concept_alignment_delta": {"mean": 0.0806, "std": 0.0996}, "perplexity_ratio": {"mean": 1.3457}, "statistical_test": {"cohens_d": 0.8093, "paired_t_test": {"p_value": 0.0307, "significant": true}}},
+        {"strength": 2.5, "semantic_shift": {"mean": 0.5607, "std": 0.3389}, "concept_alignment_delta": {"mean": 0.0440, "std": 0.1576}, "perplexity_ratio": {"mean": 1.5953}, "statistical_test": {"cohens_d": 0.2793, "paired_t_test": {"p_value": 0.4000, "significant": false}}}
+      ]
+    },
+    {
+      "concept": "creativity",
+      "display": "Creativity Boost",
+      "routing": {"layer": 21, "category": "style_personality", "confidence": 0.95},
+      "caa_vector": {"dimension": 896, "magnitude": 4.2289},
+      "sweep": [
+        {"strength": 0.5, "semantic_shift": {"mean": 0.0691, "std": 0.0644}, "concept_alignment_delta": {"mean": 0.0232, "std": 0.0459}, "perplexity_ratio": {"mean": 0.9969}, "statistical_test": {"cohens_d": 0.5055, "paired_t_test": {"p_value": 0.1444, "significant": false}}},
+        {"strength": 1.0, "semantic_shift": {"mean": 0.2460, "std": 0.2727}, "concept_alignment_delta": {"mean": 0.0410, "std": 0.0432}, "perplexity_ratio": {"mean": 1.8196}, "statistical_test": {"cohens_d": 0.9501, "paired_t_test": {"p_value": 0.0148, "significant": true}}},
+        {"strength": 1.5, "semantic_shift": {"mean": 0.2676, "std": 0.2624}, "concept_alignment_delta": {"mean": 0.0375, "std": 0.0483}, "perplexity_ratio": {"mean": 1.8053}, "statistical_test": {"cohens_d": 0.7761, "paired_t_test": {"p_value": 0.0365, "significant": true}}},
+        {"strength": 2.0, "semantic_shift": {"mean": 0.2913, "std": 0.2605}, "concept_alignment_delta": {"mean": 0.0669, "std": 0.0676}, "perplexity_ratio": {"mean": 1.8575}, "statistical_test": {"cohens_d": 0.9897, "paired_t_test": {"p_value": 0.0121, "significant": true}}},
+        {"strength": 2.5, "semantic_shift": {"mean": 0.2403, "std": 0.1178}, "concept_alignment_delta": {"mean": 0.0948, "std": 0.0727}, "perplexity_ratio": {"mean": 1.3031}, "statistical_test": {"cohens_d": 1.3047, "paired_t_test": {"p_value": 0.0026, "significant": true}}}
+      ]
+    },
+    {
+      "concept": "refusal",
+      "display": "Refusal Strengthening",
+      "routing": {"layer": 13, "category": "safety_alignment", "confidence": 0.95},
+      "caa_vector": {"dimension": 896, "magnitude": 1.7565},
+      "sweep": [
+        {"strength": 0.5, "semantic_shift": {"mean": 0.0, "std": 0.0}, "concept_alignment_delta": {"mean": 0.0, "std": 0.0}, "perplexity_ratio": {"mean": 1.0}, "statistical_test": {"cohens_d": 0.0, "paired_t_test": {"p_value": null, "significant": false}}},
+        {"strength": 1.0, "semantic_shift": {"mean": 0.0, "std": 0.0}, "concept_alignment_delta": {"mean": 0.0, "std": 0.0}, "perplexity_ratio": {"mean": 1.0}, "statistical_test": {"cohens_d": 0.0, "paired_t_test": {"p_value": null, "significant": false}}},
+        {"strength": 1.5, "semantic_shift": {"mean": 0.0377, "std": 0.1193}, "concept_alignment_delta": {"mean": 0.0136, "std": 0.0430}, "perplexity_ratio": {"mean": 1.0236}, "statistical_test": {"cohens_d": 0.3162, "paired_t_test": {"p_value": 0.3434, "significant": false}}},
+        {"strength": 2.0, "semantic_shift": {"mean": 0.0386, "std": 0.1190}, "concept_alignment_delta": {"mean": 0.0152, "std": 0.0428}, "perplexity_ratio": {"mean": 1.0300}, "statistical_test": {"cohens_d": 0.3544, "paired_t_test": {"p_value": 0.2914, "significant": false}}},
+        {"strength": 2.5, "semantic_shift": {"mean": 0.0400, "std": 0.1186}, "concept_alignment_delta": {"mean": 0.0129, "std": 0.0442}, "perplexity_ratio": {"mean": 1.0293}, "statistical_test": {"cohens_d": 0.2928, "paired_t_test": {"p_value": 0.3787, "significant": false}}}
+      ]
+    },
+    {
+      "concept": "verbosity",
+      "display": "Verbosity Control",
+      "routing": {"layer": 11, "category": "knowledge_retrieval", "confidence": 0.95},
+      "caa_vector": {"dimension": 896, "magnitude": 1.4118},
+      "sweep": [
+        {"strength": 0.5, "semantic_shift": {"mean": 0.4592, "std": 0.2061}, "concept_alignment_delta": {"mean": 0.0057, "std": 0.0953}, "perplexity_ratio": {"mean": 1.2342}, "statistical_test": {"cohens_d": 0.0598, "paired_t_test": {"p_value": 0.8542, "significant": false}}},
+        {"strength": 1.0, "semantic_shift": {"mean": 0.4573, "std": 0.2166}, "concept_alignment_delta": {"mean": 0.0095, "std": 0.1219}, "perplexity_ratio": {"mean": 0.6047}, "statistical_test": {"cohens_d": 0.0779, "paired_t_test": {"p_value": 0.8109, "significant": false}}},
+        {"strength": 1.5, "semantic_shift": {"mean": 0.4634, "std": 0.2248}, "concept_alignment_delta": {"mean": 0.0532, "std": 0.1580}, "perplexity_ratio": {"mean": 0.5584}, "statistical_test": {"cohens_d": 0.3366, "paired_t_test": {"p_value": 0.3149, "significant": false}}},
+        {"strength": 2.0, "semantic_shift": {"mean": 0.6010, "std": 0.2148}, "concept_alignment_delta": {"mean": 0.1063, "std": 0.1305}, "perplexity_ratio": {"mean": 0.7384}, "statistical_test": {"cohens_d": 0.8142, "paired_t_test": {"p_value": 0.0300, "significant": true}}},
+        {"strength": 2.5, "semantic_shift": {"mean": 0.6906, "std": 0.1781}, "concept_alignment_delta": {"mean": 0.1133, "std": 0.1536}, "perplexity_ratio": {"mean": 0.8557}, "statistical_test": {"cohens_d": 0.7377, "paired_t_test": {"p_value": 0.0445, "significant": true}}}
+      ]
+    }
+  ],
+  "pipeline_summary": {
+    "total_evaluations": 25,
+    "semantic_shift_overall": {"mean": 0.3422},
+    "effect_size_overall": {"mean": 0.4633, "std": 0.3473},
+    "perplexity_overall": {"mean": 1.2280},
+    "significant_tests": "7/25",
+    "pipeline_integrity": {
+      "scanner_functional": true,
+      "vector_computation_functional": true,
+      "steering_hooks_functional": true,
+      "evaluator_functional": true,
+      "fluency_preserved": false
+    }
+  }
+}
