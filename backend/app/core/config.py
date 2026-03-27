@@ -1,8 +1,6 @@
 """
-Application configuration using Pydantic Settings.
-
-Loads from environment variables and .env file with sensible defaults
-for local development.
+Application configuration via Pydantic Settings.
+Loads from env vars and .env file with dev defaults.
 """
 
 from __future__ import annotations
@@ -17,23 +15,20 @@ from pydantic import Field
 
 
 class Settings(BaseSettings):
-    """Global application settings – loaded once at startup."""
+    """Global application settings, loaded once at startup."""
 
-    # ── Project Metadata ──────────────────────────────────────────
     app_name: str = "SteerOps"
     app_version: str = "1.0.0"
     debug: bool = False
     log_level: str = "info"
 
-    # ── Model Configuration ───────────────────────────────────────
     model_name: str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-    device: str = "auto"  # "auto" | "cuda" | "mps" | "cpu"
+    device: str = "auto"
     quantization_enabled: bool = True
     quantization_bits: int = 4
     cache_dir: str = str(Path.home() / ".cache" / "huggingface")
     memory_limit_gb: float = 8.0
 
-    # ── API Configuration ─────────────────────────────────────────
     host: str = "0.0.0.0"
     port: int = 8000
     cors_origins: List[str] = [
@@ -44,20 +39,17 @@ class Settings(BaseSettings):
         "*",  # Override via STEEROPS_CORS_ORIGINS for production
     ]
 
-    # ── Database (SQLite) ─────────────────────────────────────────
     database_url: str = "sqlite+aiosqlite:///./steerops.db"
     database_path: str = str(
         Path(__file__).resolve().parent.parent / "steerops.db"
     )
 
-    # ── Steering Defaults ─────────────────────────────────────────
     max_steering_strength: float = 10.0
     min_steering_strength: float = -10.0
     default_max_tokens: int = 200
     default_temperature: float = 0.7
     default_top_p: float = 0.9
 
-    # ── Storage Paths ─────────────────────────────────────────────
     patches_dir: str = str(
         Path(__file__).resolve().parent.parent / "patches"
     )
@@ -65,13 +57,11 @@ class Settings(BaseSettings):
         Path(__file__).resolve().parent.parent / "logs"
     )
 
-    # ── WebSocket ─────────────────────────────────────────────────
     ws_ping_interval: int = 30
     ws_max_connections: int = 10
 
-    # ── Deployment Mode ───────────────────────────────────────────
-    # "local" = no concurrency guards (dev/personal use)
-    # "production" = session lock + rate limiting enabled
+    # "local" = no concurrency guards (dev use)
+    # "production" = session lock + rate limiting
     deploy_mode: str = "local"
 
     model_config = {
@@ -84,5 +74,4 @@ class Settings(BaseSettings):
 
 @lru_cache()
 def get_settings() -> Settings:
-    """Return a cached singleton of application settings."""
     return Settings()

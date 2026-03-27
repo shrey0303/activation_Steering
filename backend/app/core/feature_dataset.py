@@ -17,12 +17,12 @@ from __future__ import annotations
 
 from typing import List
 
-# ── Diverse prompts for activation collection ─────────────────
+# --- Diverse prompts for activation collection ---
 # Each prompt is designed to activate different layer functions.
 # We want ~500+ diverse prompts; model repeats each to reach volume.
 
 DIVERSE_PROMPTS: List[str] = [
-    # ── Factual / Knowledge Retrieval ─────────────────────────
+    # --- Factual / Knowledge Retrieval ---
     "The capital of France is",
     "In quantum mechanics, the uncertainty principle states that",
     "The speed of light in a vacuum is approximately",
@@ -54,7 +54,7 @@ DIVERSE_PROMPTS: List[str] = [
     "Black holes are regions of spacetime where gravity is so",
     "The Renaissance was a cultural movement that originated in",
 
-    # ── Creative / Storytelling / Emotional ────────────────────
+    # --- Creative / Storytelling / Emotional ---
     "Once upon a time, in a kingdom far away, there lived",
     "The sunset painted the sky in shades of orange and purple as",
     "She opened the old dusty book and discovered",
@@ -76,7 +76,7 @@ DIVERSE_PROMPTS: List[str] = [
     "The violin played a haunting melody that reminded him of",
     "Years later, she would look back on this moment and",
 
-    # ── Logical / Analytical / Reasoning ──────────────────────
+    # --- Logical / Analytical / Reasoning ---
     "If all mammals are warm-blooded and a whale is a mammal, then",
     "The main difference between correlation and causation is",
     "To solve this equation, we first need to isolate the variable by",
@@ -98,7 +98,7 @@ DIVERSE_PROMPTS: List[str] = [
     "The statistical significance of this result depends on",
     "Given these constraints, the optimal allocation strategy would",
 
-    # ── Safety / Alignment / Ethics ───────────────────────────
+    # --- Safety / Alignment / Ethics ---
     "It is important to treat all people with respect because",
     "The ethical implications of artificial intelligence include",
     "When someone asks for help with a dangerous activity, you should",
@@ -115,7 +115,7 @@ DIVERSE_PROMPTS: List[str] = [
     "The impact of social media on mental health suggests that",
     "Responsible AI development should prioritize safety by",
 
-    # ── Conversational / Social / Politeness ───────────────────
+    # --- Conversational / Social / Politeness ---
     "Thank you for your help with this project, I really appreciate",
     "I'm sorry to hear that you're going through a difficult time",
     "Could you please explain this concept in simpler terms so that",
@@ -132,7 +132,7 @@ DIVERSE_PROMPTS: List[str] = [
     "Great job on completing that task! I'm impressed by",
     "I'm not entirely sure about that, but I think",
 
-    # ── Technical / Code / Domain-specific ─────────────────────
+    # --- Technical / Code / Domain-specific ---
     "To implement a binary search tree in Python, first we",
     "The difference between REST and GraphQL APIs is that",
     "In Docker, containers provide isolation by using",
@@ -149,7 +149,7 @@ DIVERSE_PROMPTS: List[str] = [
     "In TypeScript, generics provide a way to create reusable",
     "The difference between processes and threads is that",
 
-    # ── Instructions / Imperative ─────────────────────────────
+    # --- Instructions / Imperative ---
     "Write a poem about the beauty of autumn leaves falling",
     "Explain quantum computing to a five-year-old child who",
     "List the top five reasons why exercise is important for",
@@ -161,7 +161,7 @@ DIVERSE_PROMPTS: List[str] = [
     "Analyze the economic factors that led to the 2008 financial crisis",
     "Propose a solution for reducing carbon emissions in urban areas by",
 
-    # ── Short / Ambiguous / Edge cases ────────────────────────
+    # --- Short / Ambiguous / Edge cases ---
     "Hello",
     "Yes",
     "Why?",
@@ -173,7 +173,7 @@ DIVERSE_PROMPTS: List[str] = [
     "However,",
     "In conclusion,",
 
-    # ── Emotional / Sentiment variations ──────────────────────
+    # --- Emotional / Sentiment variations ---
     "I'm so excited about this opportunity because it means",
     "This is absolutely frustrating and I can't believe that",
     "I feel deeply grateful for all the support I've received from",
@@ -185,7 +185,7 @@ DIVERSE_PROMPTS: List[str] = [
     "The anticipation is killing me! I can't wait to find out",
     "I feel conflicted about this situation because on one hand",
 
-    # ── Formal / Academic ─────────────────────────────────────
+    # --- Formal / Academic ---
     "This paper presents a comprehensive analysis of the",
     "The methodology employed in this study involves a",
     "Previous research has demonstrated that the correlation between",
@@ -197,7 +197,7 @@ DIVERSE_PROMPTS: List[str] = [
     "A critical examination of the existing evidence reveals that",
     "The proposed model accounts for the observed variance by",
 
-    # ── Informal / Casual ─────────────────────────────────────
+    # --- Informal / Casual ---
     "Dude, you won't believe what happened at the party last",
     "So basically what I'm trying to say is that like",
     "Ngl this is pretty cool because you can just",
@@ -210,7 +210,7 @@ DIVERSE_PROMPTS: List[str] = [
     "Fr though, the situation is getting out of hand when",
 ]
 
-# ── Probing prompts for auto-labeling ─────────────────────────
+# --- Probing prompts for auto-labeling ---
 # These are specifically designed to show behavioral differences
 # when a PCA component is amplified.
 LABELING_PROMPTS: List[str] = [
@@ -226,7 +226,7 @@ LABELING_PROMPTS: List[str] = [
     "How should I handle a disagreement with a friend?",
 ]
 
-# ── Behavioral keyword vocabulary for auto-labeling ───────────
+# --- Behavioral keyword vocabulary for auto-labeling ---
 # These are the target labels we try to match PCA components against.
 BEHAVIORAL_KEYWORDS: List[str] = [
     "formality",

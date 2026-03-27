@@ -1,11 +1,8 @@
 """
 PyTorch forward-hook management for activation steering.
 
-Each hook modifies the hidden state at a specific layer by adding
-a scaled direction vector (or a mean-shift if no vector is provided).
-
-Thread-safe: uses a threading lock to guard hook registration and
-removal operations.
+Hooks modify hidden states at a specific layer by adding a scaled
+direction vector. Thread-safe via threading lock on registration/removal.
 """
 
 from __future__ import annotations
@@ -31,17 +28,7 @@ class HookHandle:
 
 
 class HookManager:
-    """
-    Registers and manages forward hooks on transformer layer modules.
-
-    Thread-safe: all hook operations are guarded by a lock.
-
-    Usage:
-        mgr = HookManager()
-        mgr.add_hook(layer_module, layer_idx=5, strength=3.0)
-        # ... run forward pass ...
-        mgr.remove_all()
-    """
+    """Registers and manages forward hooks on transformer layer modules. Thread-safe."""
 
     def __init__(self) -> None:
         self._hooks: List[HookHandle] = []
@@ -59,28 +46,13 @@ class HookManager:
         strength: float,
         direction_vector: Optional[torch.Tensor] = None,
     ) -> HookHandle:
-        """
-        Register a forward hook that steers the hidden state.
+        """Register a forward hook that adds strength * direction to the hidden state at this layer."""
 
-        Parameters
-        ----------
-        layer_module : nn.Module
-            The transformer layer to hook into.
-        layer_idx : int
-            Layer index (for bookkeeping).
-        strength : float
-            Scaling factor for the intervention.
-            Positive = amplify, negative = suppress.
-        direction_vector : torch.Tensor, optional
-            Unit vector defining the steering direction.
-            If None, uses mean-shift (adds scaled mean activation).
-        """
         def hook_fn(
             module: nn.Module,
             input: Tuple[torch.Tensor, ...],
             output,
         ):
-            # Handle different output formats
             if isinstance(output, tuple):
                 hidden = output[0]
             elif isinstance(output, torch.Tensor):
@@ -90,14 +62,11 @@ class HookManager:
 
             with torch.no_grad():
                 if direction_vector is not None:
-                    # Project-and-shift along the given direction
                     vec = direction_vector.to(hidden.device, hidden.dtype)
                     if vec.dim() == 1:
-                        vec = vec.unsqueeze(0).unsqueeze(0)  # (1, 1, D)
+                        vec = vec.unsqueeze(0).unsqueeze(0)
                     hidden = hidden + strength * vec
                 else:
-                    # Mean-shift: scale the mean activation across the
-                    # hidden dimension and add it back
                     mean_act = hidden.mean(dim=-1, keepdim=True)
                     hidden = hidden + strength * 0.1 * mean_act
 
@@ -118,7 +87,7 @@ class HookManager:
             return hook
 
     def remove_all(self) -> int:
-        """Remove all registered hooks. Returns count of removed hooks."""
+        """Remove all registered hooks. Returns count removed."""
         with self._lock:
             count = len(self._hooks)
             for h in self._hooks:

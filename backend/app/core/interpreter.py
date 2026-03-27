@@ -32,9 +32,7 @@ except ImportError:
     _HAS_TEXTBLOB = False
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  DATA CLASSES                                                ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Data Classes ---
 
 
 @dataclass
@@ -75,9 +73,7 @@ class IntentRouterResult:
         }
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  INTENT ROUTER (Phase 2 — Production)                       ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Intent Router ---
 
 
 class IntentRouter:
@@ -188,7 +184,7 @@ class IntentRouter:
         if self._embedder is None or self._label_embeddings is None:
             return IntentRouterResult(query=text, method="no_embedder")
 
-        # ── Stage 1: Bi-encoder retrieval ──────────────────────
+        # --- Stage 1: Bi-encoder retrieval ---
         text_emb = self._embedder.encode([text])[0]
 
         text_norm = text_emb / (np.linalg.norm(text_emb) + 1e-8)
@@ -200,7 +196,7 @@ class IntentRouter:
         sims = labels_norm @ text_norm
         top_indices = np.argsort(sims)[::-1][:top_k]
 
-        # ── Stage 2: NLI direction classification ──────────────
+        # --- Stage 2: NLI direction classification ---
         self._ensure_cross_encoder()
 
         matches = []
@@ -209,7 +205,7 @@ class IntentRouter:
                 continue
             feat = self._labeled_features[idx]
 
-            # NLI determines direction; fallback to keywords if unavailable
+
             direction = self._classify_direction(text, feat.label)
 
             matches.append(
@@ -256,7 +252,6 @@ class IntentRouter:
         if not clauses:
             clauses = [user_text]
 
-        # Run NLI for all clauses x both hypotheses in one batch
         pairs = []
         for clause in clauses:
             clause = clause.strip()
@@ -270,7 +265,7 @@ class IntentRouter:
 
         raw_scores = self._cross_encoder.predict(pairs, apply_softmax=True)
 
-        # Aggregate: pick strongest directional signal across all clauses
+
         best_enh = -999.0
         best_sup = -999.0
         for i in range(0, len(raw_scores), 2):
@@ -328,9 +323,7 @@ class IntentRouter:
         return cls(feature_dict=fd)
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  MODULE-LEVEL UTILITIES                                      ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Utilities ---
 
 
 def _split_clauses(text: str) -> List[str]:
@@ -353,14 +346,10 @@ def _split_clauses(text: str) -> List[str]:
     return [c.strip() for c in clauses if len(c.strip()) > 2]
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  LEGACY CATEGORY LABELS                                      ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Legacy Category Labels ---
 
 
-# ── Category labels for retrieval (simple names, NOT hardcoded descriptions) ─
-# Bi-encoder matches user text against these label embeddings.
-# Direction is determined by NLI cross-encoder, not by description matching.
+
 LAYER_CATEGORIES = [
     "token_embedding",
     "positional_morphological",
@@ -374,8 +363,7 @@ LAYER_CATEGORIES = [
     "output_distribution",
 ]
 
-# Human-readable labels for RETRIEVAL ONLY (bi-encoder step)
-# These are neutral category names — NOT used for direction classification.
+# Neutral category names for bi-encoder retrieval step
 CATEGORY_LABELS = {
     "token_embedding": "vocabulary and word choice",
     "positional_morphological": "grammar and syntax",
@@ -389,11 +377,8 @@ CATEGORY_LABELS = {
     "output_distribution": "output confidence",
 }
 
-# Dual-hypothesis pairs for NLI direction classification.
-# enhance_h: what we test when we suspect the user WANTS MORE of this category.
-# suppress_h: what we test when we suspect the user WANTS LESS of this category.
-# NLI entailment score for each hypothesis is compared —
-# whichever is higher determines the direction.
+# NLI hypothesis pairs for direction classification.
+# Entailment score for enhance_h vs suppress_h determines +1 or -1 direction.
 CATEGORY_HYPOTHESES = {
     "token_embedding": {
         "enhance_h": "The speaker wants clearer and more precise vocabulary.",
@@ -568,14 +553,14 @@ class ResponseInterpreter:
         enhance_h = hyps["enhance_h"]
         suppress_h = hyps["suppress_h"]
 
-        # Run NLI for both hypotheses in one batch
+
         scores = self._nli_model.predict([
             (clause, enhance_h),
             (clause, suppress_h),
         ])
-        # scores shape: (2, 3) = [contradiction, entailment, neutral]
-        enh_entail = float(scores[0][1])   # entailment for enhance
-        sup_entail = float(scores[1][1])   # entailment for suppress
+
+        enh_entail = float(scores[0][1])
+        sup_entail = float(scores[1][1])
 
         if enh_entail >= sup_entail:
             return +1.0, enh_entail
@@ -590,10 +575,8 @@ class ResponseInterpreter:
         Handles: and, but, though, yet, while, even, however, although,
                  or, nor, comma-separated phrases, semicolons.
         """
-        # Split by connectors (word boundaries to avoid splitting mid-word)
         pattern = r'\s*(?:\band\b|\bbut\b|\bthough\b|\byet\b|\bwhile\b|\beven\b|\bhowever\b|\balthough\b|\bor\b|\bnor\b|[;,])\s*'
         clauses = re.split(pattern, text, flags=re.IGNORECASE)
-        # Filter empty and very short fragments
         return [c.strip() for c in clauses if len(c.strip()) > 2]
 
     @staticmethod
@@ -606,10 +589,6 @@ class ResponseInterpreter:
             return -1.0, 0.6
         return +1.0, 0.6
 
-    @staticmethod
-    def _split_clauses(text: str) -> List[str]:
-        """Delegate to module-level _split_clauses."""
-        return _split_clauses(text)
 
     def interpret(
         self,
@@ -627,7 +606,7 @@ class ResponseInterpreter:
           Three-stage static-category pipeline (LAYER_CATEGORIES + NLI).
           Provides full functionality out-of-the-box for new users.
         """
-        # ── Sentiment ──────────────────────────────────────────
+        # --- Sentiment---
         polarity = 0.0
         subjectivity = 0.0
         if _HAS_TEXTBLOB and text:
@@ -635,7 +614,7 @@ class ResponseInterpreter:
             polarity = blob.sentiment.polarity
             subjectivity = blob.sentiment.subjectivity
 
-        # ── PRIMARY PATH: Feature-dict routing (DB-driven) ────
+       
         if (
             self._intent_router is not None
             and self._intent_router.feature_dict is not None
@@ -646,11 +625,11 @@ class ResponseInterpreter:
 
             result = self._intent_router.route(text, top_k=5)
 
-            # Convert FeatureMatch list to InterpretationResult
+          
             intent_scores: Dict[str, float] = {}
             feature_matches = []
             for m in result.matches:
-                # Use feature_id as key so LayerResolver can find the layer
+               
                 intent_scores[m.feature_id] = m.direction * m.similarity
                 feature_matches.append({
                     "feature_id": m.feature_id,
@@ -685,7 +664,7 @@ class ResponseInterpreter:
                 routed_by_features=True,
             )
 
-        # ── FALLBACK PATH: Static category + NLI ─────────────
+        # --- FALLBACK PATH: Static category + NLI---
         # Used when no feature extraction has been run yet.
         self._ensure_embedder()
         self._ensure_nli()
@@ -697,22 +676,19 @@ class ResponseInterpreter:
                 method="fallback",
             )
 
-        # ── Stage 1: Split into clauses ───────────────────────
+        # --- Stage 1: Split into clauses ---
         clauses = self._split_clauses(text)
         if not clauses:
             clauses = [text]
 
-        # ── Stage 2: Per-clause category matching ─────────────
-        # For each clause, find which categories it's most relevant to,
-        # then classify direction with NLI only for those categories.
-        # result: dict[category] -> (direction * relevance, raw_relevance)
+        # --- Stage 2: Per-clause category matching ---
         cat_scores: Dict[str, Tuple[float, float]] = {}
 
         for clause in clauses:
             clause_emb = self._embedder.encode([clause])[0]
             clause_norm = clause_emb / (np.linalg.norm(clause_emb) + 1e-8)
 
-            # Cosine similarity of this clause against each category
+          
             clause_sims = {}
             all_clause_sims = []
             for cat in LAYER_CATEGORIES:
@@ -722,24 +698,23 @@ class ResponseInterpreter:
                 clause_sims[cat] = sim
                 all_clause_sims.append(sim)
 
-            # Dynamic threshold for this clause
+           
             sim_arr = np.array(all_clause_sims)
             threshold = float(sim_arr.mean() + 0.3 * sim_arr.std())
 
-            # ── Stage 3: NLI direction for matched categories ─
+           
             for cat, sim in clause_sims.items():
                 if sim <= threshold:
                     continue
 
-                # Pass category KEY (not label) — new dual-hypothesis signature
+             
                 direction, nli_conf = self._classify_direction_nli(clause, cat)
                 score = direction * sim
 
-                # Keep strongest signal per category
+                
                 if cat not in cat_scores or abs(score) > abs(cat_scores[cat][0]):
                     cat_scores[cat] = (score, sim)
 
-        # Build result
         intent_scores = {cat: s[0] for cat, s in cat_scores.items()}
         layer_sims = {cat: s[1] for cat, s in cat_scores.items()}
         dominant = sorted(

@@ -1,12 +1,4 @@
-"""
-CLI for steerops.
-
-Commands:
-    steerops apply  <patch> --model <name> --prompt <text>
-    steerops info   <patch>
-    steerops validate <patch> --layers <num>
-    steerops merge  <patch1> <patch2> -o <output>
-"""
+"""CLI for steerops — apply, inspect, validate, and merge patches."""
 
 from __future__ import annotations
 
@@ -24,7 +16,7 @@ def main():
     )
     sub = parser.add_subparsers(dest="command", help="Available commands")
 
-    # ── apply ─────────────────────────────────────────────────
+    # --- apply ---
     apply_p = sub.add_parser("apply", help="Apply a patch and generate text")
     apply_p.add_argument("patch", help="Path to patch JSON file")
     apply_p.add_argument("--model", required=True, help="HF model name")
@@ -35,11 +27,11 @@ def main():
     )
     apply_p.add_argument("--quantize", action="store_true")
 
-    # ── info ──────────────────────────────────────────────────
+    # --- info ---
     info_p = sub.add_parser("info", help="Show patch details")
     info_p.add_argument("patch", help="Path to patch JSON file")
 
-    # ── validate ──────────────────────────────────────────────
+    # --- validate ---
     val_p = sub.add_parser("validate", help="Validate a patch")
     val_p.add_argument("patch", help="Path to patch JSON file")
     val_p.add_argument(
@@ -47,7 +39,7 @@ def main():
         help="Number of layers in the target model",
     )
 
-    # ── merge ─────────────────────────────────────────────────
+    # --- merge ---
     merge_p = sub.add_parser("merge", help="Merge multiple patches")
     merge_p.add_argument("patches", nargs="+", help="Patch files to merge")
     merge_p.add_argument("-o", "--output", required=True, help="Output file")
@@ -78,9 +70,9 @@ def main():
 def cmd_apply(args):
     from steerops.steerer import Steerer
 
-    print(f"📂 Loading patch: {args.patch}")
-    print(f"🤖 Loading model: {args.model}")
-    print(f"💬 Prompt: {args.prompt}")
+    print(f"Loading patch: {args.patch}")
+    print(f"Loading model: {args.model}")
+    print(f"Prompt: {args.prompt}")
     print()
 
     text = Steerer.run(
@@ -92,9 +84,9 @@ def cmd_apply(args):
         quantize=args.quantize,
     )
 
-    print("─" * 60)
-    print("📝 Generated output:")
-    print("─" * 60)
+    print("-" * 60)
+    print("Generated output:")
+    print("-" * 60)
     print(text)
 
 
@@ -104,7 +96,6 @@ def cmd_info(args):
     print()
     print(f"Description: {patch.description or '(none)'}")
 
-    # Show direction vector stats
     for iv in patch.interventions:
         vec_info = "None"
         if iv.direction_vector:
@@ -120,9 +111,9 @@ def cmd_validate(args):
     warnings = patch.validate_for_model(args.layers)
 
     if not warnings:
-        print(f"✅ Patch '{patch.name}' is valid for {args.layers}-layer model")
+        print(f"Patch '{patch.name}' is valid for {args.layers}-layer model")
     else:
-        print(f"⚠️  Patch '{patch.name}' has {len(warnings)} warning(s):")
+        print(f"Patch '{patch.name}' has {len(warnings)} warning(s):")
         for w in warnings:
             print(f"  - {w}")
         sys.exit(1)
@@ -133,7 +124,7 @@ def cmd_merge(args):
     merged = Patch.merge(patches, name=args.name, strategy=args.strategy)
     merged.save(args.output)
 
-    print(f"✅ Merged {len(patches)} patches → {args.output}")
+    print(f"Merged {len(patches)} patches -> {args.output}")
     print(f"   Strategy: {args.strategy}")
     print(f"   Interventions: {len(merged.interventions)}")
 

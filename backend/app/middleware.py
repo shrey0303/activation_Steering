@@ -1,12 +1,11 @@
 """
 Production concurrency guard for SteerOps.
 
-Provides two middleware layers:
-1. **SessionLock** — Only one user can hold the GPU at a time.
-   Lightweight endpoints (health, metrics, models list) are exempt.
-2. **RateLimiter** — Per-IP request throttling to prevent abuse.
+Two middleware layers:
+1. SessionLock — single-user GPU guard (lightweight endpoints exempt)
+2. RateLimiter — per-IP request throttling
 
-These make single-tenant SteerOps safe for public demos without
+Makes single-tenant SteerOps safe for public demos without
 requiring a full multi-tenant rewrite.
 """
 
@@ -23,8 +22,7 @@ from starlette.responses import JSONResponse
 from loguru import logger
 
 
-# ── Endpoints that bypass the session lock ────────────────────
-# These are read-only or stateless and safe for concurrent access.
+# Read-only/stateless endpoints that bypass session lock
 EXEMPT_PATHS: Set[str] = {
     "/docs",
     "/redoc",
@@ -39,23 +37,13 @@ EXEMPT_PATHS: Set[str] = {
 }
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  SESSION LOCK — single-user GPU guard                       ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Session Lock ---
 
 class SessionLockMiddleware(BaseHTTPMiddleware):
     """
-    Ensures only ONE user session can interact with GPU-bound
-    endpoints at a time.
-
-    How it works:
-    - First user to hit a GPU endpoint "acquires" the lock.
-    - Subsequent users get a 503 with a friendly message.
-    - Lock auto-expires after `timeout` seconds of inactivity.
-    - Exempt endpoints (health, metrics) are always accessible.
-
-    This is the simplest concurrency guard: no Redis, no queues.
-    Perfect for single-GPU demo deployments.
+    Single-user GPU guard. First user to hit a GPU endpoint acquires the lock;
+    subsequent users get 503. Lock auto-expires after `timeout` seconds of inactivity.
+    No Redis, no queues — simplest possible concurrency guard for single-GPU demos.
     """
 
     def __init__(self, app, timeout: int = 300):
@@ -63,30 +51,24 @@ class SessionLockMiddleware(BaseHTTPMiddleware):
         self._lock = asyncio.Lock()
         self._current_session: str | None = None
         self._last_activity: float = 0.0
-        self._timeout = timeout  # seconds
+        self._timeout = timeout
 
     def _get_session_id(self, request: Request) -> str:
-        """Derive a session ID from the client's IP + User-Agent."""
         ip = request.client.host if request.client else "unknown"
         ua = request.headers.get("user-agent", "")[:64]
         return f"{ip}|{ua}"
 
     def _is_exempt(self, path: str) -> bool:
-        """Check if the path is exempt from session locking."""
-        # Exact match
         if path in EXEMPT_PATHS:
             return True
-        # Prefix match for parameterized routes
         for exempt in EXEMPT_PATHS:
             if path.startswith(exempt + "/"):
                 return True
-        # WebSocket upgrade — let the WS handler manage its own guard
         return False
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
 
-        # Skip lock for exempt endpoints
         if self._is_exempt(path):
             return await call_next(request)
 
@@ -94,7 +76,6 @@ class SessionLockMiddleware(BaseHTTPMiddleware):
         now = time.time()
 
         async with self._lock:
-            # Auto-expire stale sessions
             if (
                 self._current_session is not None
                 and self._current_session != session_id
@@ -106,7 +87,6 @@ class SessionLockMiddleware(BaseHTTPMiddleware):
                 )
                 self._current_session = None
 
-            # Check if another session owns the lock
             if (
                 self._current_session is not None
                 and self._current_session != session_id
@@ -124,14 +104,11 @@ class SessionLockMiddleware(BaseHTTPMiddleware):
                     headers={"Retry-After": "60"},
                 )
 
-            # Acquire or refresh the lock
             self._current_session = session_id
             self._last_activity = now
 
-        # Proceed with the request
         response = await call_next(request)
 
-        # Update last activity
         async with self._lock:
             if self._current_session == session_id:
                 self._last_activity = time.time()
@@ -139,20 +116,12 @@ class SessionLockMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  RATE LIMITER — per-IP throttle                             ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Rate Limiter ---
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """
-    Simple in-memory per-IP rate limiter using a sliding window.
-
-    Defaults:
-    - 30 requests per 60-second window for GPU endpoints
-    - 120 requests per 60-second window for exempt/lightweight endpoints
-
-    No external dependencies (Redis, etc.) — suitable for
-    single-instance deployments.
+    In-memory per-IP rate limiter using a sliding window.
+    No external dependencies — suitable for single-instance deployments.
     """
 
     def __init__(
@@ -169,7 +138,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._requests: dict[str, list[float]] = defaultdict(list)
 
     def _cleanup(self, ip: str, now: float):
-        """Remove timestamps outside the current window."""
         cutoff = now - self._window
         self._requests[ip] = [
             t for t in self._requests[ip] if t > cutoff

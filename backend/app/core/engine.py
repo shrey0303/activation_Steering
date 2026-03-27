@@ -29,9 +29,7 @@ from loguru import logger
 from app.core.loader import ModelManager
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  STEERING HOOK — Production Pipeline                        ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Steering Hook ---
 
 
 @dataclass
@@ -47,16 +45,7 @@ class SteeringDiagnostics:
 
 
 class SteeringHook:
-    """
-    Production-grade forward hook with orthogonal projection.
-
-    5-step pipeline per forward pass:
-      1. Preserve KV cache (never strip tuple elements)
-      2. Check cooldown (circuit breaker recovery)
-      3. Gate (skip if already aligned)
-      4. Orthogonal projection + adaptive decay
-      5. L2 norm preservation
-    """
+    """Forward hook implementing orthogonal projection steering with gating and norm preservation."""
 
     def __init__(
         self,
@@ -77,13 +66,11 @@ class SteeringHook:
         self.min_decay = min_decay
         self.mode = mode
 
-        # Gating: adaptive threshold based on hidden dim
-        # In high-D spaces, cosine similarity shrinks toward 0
-        # Default is set when we first see the hidden dimension
+        # Default threshold is calibrated on first forward pass based on hidden dim
         self._gate_threshold_override = gate_threshold
         self.gate_threshold: float = gate_threshold or 0.15
 
-        # Runtime state
+
         self.handle: Optional[torch.utils.hooks.RemovableHook] = None
         self.token_count: int = 0
         self.cooldown_remaining: int = 0
@@ -91,7 +78,6 @@ class SteeringHook:
         self.overhead_ms: float = 0.0
         self.last_diagnostics = SteeringDiagnostics()
 
-        # Cached direction vector (moved to device on first use)
         self._v_cached: Optional[torch.Tensor] = None
         self._threshold_calibrated: bool = False
 
@@ -111,16 +97,17 @@ class SteeringHook:
             return
 
         # 3-sigma above random baseline for small models
-        # For large models (hidden_dim > 2048): disable gating entirely.
-        # 7B+ models have strong concept specialization — activations are
-        # naturally aligned with steering vectors, causing gate to fire
-        # on every call and return output unmodified.
-        if hidden_dim > 2048:
+        # For large models (hidden_dim >= 2048): disable gating entirely.
+        # Models at 2B+ scale (e.g., Sarvam-2B with dim=2048, Qwen-7B with dim=3584)
+        # have strong concept specialization — activations are naturally aligned
+        # with steering vectors, causing gate to fire on every call and
+        # return output unmodified.
+        if hidden_dim >= 2048:
             self.gate_threshold = 999.0  # effectively disabled
             self._threshold_calibrated = True
             logger.debug(
                 f"Layer {self.layer_idx}: gating DISABLED "
-                f"(hidden_dim={hidden_dim} > 2048)"
+                f"(hidden_dim={hidden_dim} >= 2048)"
             )
         else:
             self.gate_threshold = 3.0 / math.sqrt(hidden_dim)
@@ -151,7 +138,7 @@ class SteeringHook:
             diag = SteeringDiagnostics(token_index=self.token_count)
 
             try:
-                # ── STEP 0: Extract hidden states, preserve KV cache ──
+                # Preserve KV cache tuple structure
                 if isinstance(output, tuple):
                     x = output[0]           # (batch, seq, hidden_dim)
                     kv_cache = output[1:]   # past_key_values, attn, etc.
@@ -174,27 +161,22 @@ class SteeringHook:
                         return (x_shifted,) + kv_cache
                     return x_shifted
 
-                # Calibrate gate on first call
                 hidden_dim = x.shape[-1]
                 self._calibrate_threshold(hidden_dim)
 
-                # Cache direction vector on correct device/dtype
                 if self._v_cached is None or self._v_cached.device != x.device:
                     v = self.direction_vector.to(x.device, dtype=x.dtype)
-                    # L2-normalize for stable cosine computations
+
                     self._v_cached = F.normalize(v, dim=-1)
                 v = self._v_cached
 
-                # ── STEP 1: Cooldown check ────────────────────────
                 if self.cooldown_remaining > 0:
                     self.cooldown_remaining -= 1
                     diag.cooldown_active = True
                     self.last_diagnostics = diag
                     return output  # pass through unmodified
 
-                # ── STEP 2: Gating — skip if already aligned ──────
-                # Use last token position for gating decision
-                x_last = x[:, -1, :]  # (batch, hidden_dim)
+                x_last = x[:, -1, :]
                 x_last_norm = F.normalize(x_last, dim=-1)
                 cos_sim = (x_last_norm * v).sum(dim=-1).mean().item()
                 diag.cosine_similarity = cos_sim
@@ -204,22 +186,18 @@ class SteeringHook:
                     self.last_diagnostics = diag
                     return output  # model already heading there
 
-                # ── STEP 3: Steering or Erasure ────────────────────
                 if self.mode == "erase":
-                    # LEACE null-space: remove ALL linear info about v
-                    # x_erased = x - (x·v̂)v̂  (project onto null-space of v)
+                    # LEACE null-space projection: x_erased = x - (x·v̂)v̂
                     proj_coeff = (x * v).sum(dim=-1, keepdim=True)  # (batch, seq, 1)
                     x_new = x - proj_coeff * v  # erase concept direction
                     diag.effective_strength = 0.0  # erasure is binary
                 else:
-                    # Orthogonal projection + adaptive decay (default)
-                    # v_orth = v - proj_x(v) = v - (v·x̂)x̂
+                    # v_orth = v - proj_x(v): steer along orthogonal component only
                     x_norm = F.normalize(x, dim=-1)
                     proj_coeff = (x_norm * v).sum(dim=-1, keepdim=True)
                     proj = proj_coeff * x_norm
-                    v_orth = v - proj  # orthogonal component
+                    v_orth = v - proj
 
-                    # Adaptive decay: full strength early, decay over time
                     decay = max(self.min_decay, 1.0 - self.token_count * self.decay_rate)
                     effective_strength = self.strength * decay
 
@@ -231,15 +209,11 @@ class SteeringHook:
                     effective_strength = effective_strength * scale_factor
                     diag.effective_strength = effective_strength
 
-                    # Apply steering
                     x_new = x + effective_strength * v_orth
 
-                # ── STEP 4: L2 Norm Preservation ──────────────────
                 orig_norm = x.norm(dim=-1, keepdim=True)
                 new_norm = x_new.norm(dim=-1, keepdim=True)
-                # Scale factor: keep within tolerance of original norm
-                # Use wider tolerance for larger models where perturbation
-                # needs to be proportionally bigger
+                # Wider tolerance for large models where perturbation needs to be proportionally bigger
                 effective_tolerance = self.norm_tolerance
                 if hidden_dim > 2048:
                     effective_tolerance = max(self.norm_tolerance, 0.25)
@@ -249,24 +223,23 @@ class SteeringHook:
                 scale = scale.clamp(min=min_scale, max=max_scale)
                 x_steered = x_new * scale
 
-                # Track norm deviation for diagnostics
                 actual_norm = x_steered.norm(dim=-1).mean().item()
                 orig_norm_val = orig_norm.mean().item()
                 diag.norm_deviation = abs(actual_norm - orig_norm_val) / (orig_norm_val + 1e-8)
 
-                # ── STEP 5: Safety — NaN/Inf check ────────────────
+
                 if torch.isnan(x_steered).any() or torch.isinf(x_steered).any():
                     logger.warning(
                         f"NaN/Inf at layer {self.layer_idx} – reverting"
                     )
-                    self.cooldown_remaining = 10  # Extended cooldown
+                    self.cooldown_remaining = 10
                     return output
 
                 self.fired = True
                 self.token_count += 1
                 self.last_diagnostics = diag
 
-                # ── Reconstruct output preserving KV cache ────────
+
                 if kv_cache is not None:
                     return (x_steered,) + kv_cache
                 return x_steered
@@ -277,28 +250,18 @@ class SteeringHook:
         return _hook
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  STEERING ENGINE — Orchestrator                              ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Steering Engine ---
 
 
 class SteeringEngine:
-    """
-    Orchestrates production-grade steering hooks on the loaded model.
-
-    Features:
-      - Multi-layer orthogonal steering
-      - Logit entropy circuit breaker (cooldown-based)
-      - Per-token diagnostics streaming
-      - Clean hook lifecycle management
-    """
+    """Orchestrates steering hooks on the loaded model with circuit breaking and diagnostics."""
 
     # Default entropy threshold for circuit breaker.
     # Normal generation entropy ≈ 2-4 nats. Spike above 6 = model confused.
     DEFAULT_ENTROPY_THRESHOLD = 6.0
     DEFAULT_COOLDOWN_TOKENS = 5
 
-    # ── Singleton ──────────────────────────────────────────────
+
     _instance: Optional["SteeringEngine"] = None
 
     @classmethod
@@ -339,9 +302,7 @@ class SteeringEngine:
         self.entropy_threshold = self.DEFAULT_ENTROPY_THRESHOLD
         self.cooldown_tokens = self.DEFAULT_COOLDOWN_TOKENS
 
-    # ╔══════════════════════════════════════════════════════════╗
-    # ║               HOOK MANAGEMENT                           ║
-    # ╚══════════════════════════════════════════════════════════╝
+    # --- Hook Management ---
 
     def add_intervention(
         self,
@@ -357,7 +318,7 @@ class SteeringEngine:
         if not self.mm.loaded:
             raise RuntimeError("Model not loaded")
 
-        # Remove existing hook on this layer if any
+
         self.remove_intervention(layer_idx)
 
         layers = self.mm.get_layer_modules()
@@ -379,7 +340,7 @@ class SteeringEngine:
         hook.handle = handle
         self._hooks[layer_idx] = hook
 
-        # Log gate threshold info for diagnostics
+
         logger.info(
             f"Hook registered: layer={layer_idx}, strength={strength:.1f}, "
             f"mode={mode}, norm_tol={norm_tolerance}, decay={decay_rate}, "
@@ -431,7 +392,7 @@ class SteeringEngine:
         """Reset all hooks and orthogonalize vectors for new generation."""
         for h in self._hooks.values():
             h.reset_token_count()
-        # Gram-Schmidt: ensure multi-vector mutual orthogonality
+
         self._orthogonalize_hooks()
 
     def _orthogonalize_hooks(self) -> None:
@@ -447,7 +408,7 @@ class SteeringEngine:
         if len(hooks) < 2:
             return
 
-        # Force-cache all vectors on same device
+
         device = None
         for h in hooks:
             if h._v_cached is not None:
@@ -456,7 +417,7 @@ class SteeringEngine:
         if device is None:
             return  # vectors not yet cached — will be done on first forward
 
-        # Gram-Schmidt
+
         for i in range(1, len(hooks)):
             vi = hooks[i]._v_cached
             if vi is None:
@@ -465,7 +426,7 @@ class SteeringEngine:
                 vj = hooks[j]._v_cached
                 if vj is None:
                     continue
-                # Subtract projection of vi onto vj
+
                 vi = vi - (vi @ vj / (vj @ vj + 1e-8)) * vj
             hooks[i]._v_cached = F.normalize(vi, dim=-1)
 
@@ -479,9 +440,7 @@ class SteeringEngine:
             f"Circuit breaker: cooldown {self.cooldown_tokens} tokens on all hooks"
         )
 
-    # ╔══════════════════════════════════════════════════════════╗
-    # ║                TEXT GENERATION                          ║
-    # ╚══════════════════════════════════════════════════════════╝
+    # --- Text Generation ---
 
     @torch.no_grad()
     def generate(
@@ -539,9 +498,7 @@ class SteeringEngine:
             "interventions": self.active_interventions,
         }
 
-    # ╔══════════════════════════════════════════════════════════╗
-    # ║             ACTIVATION CAPTURE                          ║
-    # ╚══════════════════════════════════════════════════════════╝
+    # --- Activation Capture ---
 
     @torch.no_grad()
     def capture_activations(
@@ -611,9 +568,7 @@ class SteeringEngine:
 
         return activations
 
-    # ╔══════════════════════════════════════════════════════════╗
-    # ║         STREAMING GENERATION + CIRCUIT BREAKER           ║
-    # ╚══════════════════════════════════════════════════════════╝
+    # --- Streaming Generation ---
 
     @torch.no_grad()
     def generate_stream(
@@ -656,9 +611,9 @@ class SteeringEngine:
             outputs = model(input_ids)
             logits = outputs.logits[:, -1, :]
 
-            # ── Entropy circuit breaker ───────────────────────
+
             probs = torch.softmax(logits, dim=-1)
-            # Shannon entropy in nats
+
             log_probs = torch.log(probs + 1e-10)
             entropy = -(probs * log_probs).sum(dim=-1).mean().item()
 
@@ -666,11 +621,11 @@ class SteeringEngine:
                 # DON'T re-run the model. Just cooldown the hooks.
                 self._trigger_cooldown()
 
-            # ── Temperature scaling ───────────────────────────
+
             if temperature > 0:
                 logits = logits / max(temperature, 0.01)
 
-            # ── Top-p sampling ────────────────────────────────
+
             if top_p < 1.0:
                 sorted_logits, sorted_indices = torch.sort(
                     logits, descending=True
@@ -693,7 +648,7 @@ class SteeringEngine:
             )
             input_ids = torch.cat([input_ids, next_token], dim=-1)
 
-            # ── Collect diagnostics from hooks ────────────────
+
             diag = {
                 "entropy": round(entropy, 3),
                 "steering_gated": False,
@@ -703,7 +658,6 @@ class SteeringEngine:
                 "token_index": token_idx,
             }
             if self._hooks:
-                # Aggregate from all active hooks
                 any_gated = any(h.last_diagnostics.gated for h in self._hooks.values())
                 any_cooldown = any(h.last_diagnostics.cooldown_active for h in self._hooks.values())
                 max_norm_dev = max(

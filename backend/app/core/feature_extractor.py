@@ -1,25 +1,11 @@
 """
 PCA Feature Extraction Pipeline — Offline Feature Dictionary.
 
-Replaces static weight scanning (scanner.py) and CAA (vector_calculator.py)
-with mathematically rigorous, data-driven feature discovery.
-
 Pipeline:
-  1. Run diverse prompts through the model
-  2. Collect residual stream activations at each layer
-  3. Run PCA to find top-K principal components per layer
-  4. Auto-label top components by amplifying them and observing output
-  5. Store everything in SQLite as a reusable Feature Dictionary
-
-Usage:
-  # From CLI
-  python -m app.core.feature_extractor --model HuggingFaceTB/SmolLM2-135M
-
-  # Programmatic
-  extractor = FeatureExtractor()
-  extractor.extract(model, tokenizer, model_name="SmolLM2-135M")
-  dict = FeatureDictionary.load(model_name="SmolLM2-135M")
-  feature = dict.get("L14_PC0")
+  1. Collect residual stream activations from diverse prompts
+  2. PCA per layer
+  3. Auto-label top components via contrastive amplification
+  4. Store in SQLite as reusable Feature Dictionary
 """
 
 from __future__ import annotations
@@ -42,15 +28,13 @@ from app.core.feature_dataset import (
     get_labeling_prompts,
 )
 
-# ── Storage paths ─────────────────────────────────────────────
+
 _DATA_DIR = Path(__file__).parent.parent / "data"
 _FEATURES_DB = _DATA_DIR / "features.db"
 _VECTORS_DIR = _DATA_DIR / "feature_vectors"
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  DATA CLASSES                                                ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Data Classes ---
 
 
 @dataclass
@@ -69,18 +53,11 @@ class Feature:
         return torch.from_numpy(self.vector).to(device=device, dtype=dtype)
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  FEATURE DICTIONARY — Runtime Lookup                         ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Feature Dictionary ---
 
 
 class FeatureDictionary:
-    """
-    O(1) runtime lookup for extracted features.
-
-    Loads from SQLite + numpy files on startup.
-    Stays in memory for the lifetime of the server.
-    """
+    """O(1) runtime lookup for extracted features."""
 
     def __init__(self) -> None:
         self._features: Dict[str, Feature] = {}
@@ -185,9 +162,7 @@ class FeatureDictionary:
         ]
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  FEATURE EXTRACTOR — Offline Pipeline                        ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Feature Extractor ---
 
 
 class FeatureExtractor:
@@ -229,7 +204,7 @@ class FeatureExtractor:
                     "auto-labeling will be skipped"
                 )
 
-    # ── Step 1: Activation Collection ─────────────────────────
+    # --- Validation ---
 
     @torch.no_grad()
     def _collect_activations(
@@ -252,7 +227,6 @@ class FeatureExtractor:
         }
         handles = []
 
-        # Register hooks on all layers
         for idx in range(n_layers):
             def make_hook(layer_idx: int):
                 def _capture(module, inp, out):
@@ -264,7 +238,6 @@ class FeatureExtractor:
             handle = layer_modules[idx].register_forward_hook(make_hook(idx))
             handles.append(handle)
 
-        # Run all prompts
         total = len(prompts)
         batch_size = 8
         for start in range(0, total, batch_size):
@@ -283,11 +256,9 @@ class FeatureExtractor:
                     f"Collecting activations: {min(start + batch_size, total)}/{total}"
                 )
 
-        # Remove hooks
         for h in handles:
             h.remove()
 
-        # Concatenate
         result = {}
         for idx in range(n_layers):
             if layer_activations[idx]:
@@ -300,7 +271,7 @@ class FeatureExtractor:
         )
         return result
 
-    # ── Step 2: PCA ───────────────────────────────────────────
+    # --- PCA ---
 
     def _run_pca(
         self,
@@ -316,7 +287,6 @@ class FeatureExtractor:
         results = {}
 
         for layer_idx, acts in activations.items():
-            # Center the data
             acts_np = acts.numpy()
             mean = acts_np.mean(axis=0)
             centered = acts_np - mean
@@ -329,11 +299,9 @@ class FeatureExtractor:
                 logger.warning(f"SVD failed for layer {layer_idx}, skipping")
                 continue
 
-            # Top-K components
             k = min(self.top_k, len(S))
             components = Vt[:k]  # (k, hidden_dim)
 
-            # Explained variance ratio
             total_variance = (S ** 2).sum()
             explained = (S[:k] ** 2) / total_variance
 
@@ -355,7 +323,7 @@ class FeatureExtractor:
         logger.info(f"PCA complete: {len(results)} layers processed")
         return results
 
-    # ── Step 3: Auto-Labeling ─────────────────────────────────
+    # --- Auto-labeling ---
 
     @torch.no_grad()
     def _auto_label_component(
@@ -452,7 +420,7 @@ class FeatureExtractor:
         logger.debug(f"Auto-label: sim={best_sim:.3f} → '{label}'")
         return label
 
-    # ── Step 4: Storage ───────────────────────────────────────
+    # --- Storage ---
 
     def _init_db(self, db_path: Path) -> sqlite3.Connection:
         """Initialize SQLite database for feature storage."""
@@ -508,7 +476,7 @@ class FeatureExtractor:
             ),
         )
 
-    # ── Main Pipeline ─────────────────────────────────────────
+    # --- Main Pipeline ---
 
     def extract(
         self,
@@ -601,9 +569,7 @@ class FeatureExtractor:
         return FeatureDictionary.load(model_name, db_path)
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  CLI ENTRY POINT                                             ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- CLI ---
 
 
 def main():
@@ -635,7 +601,6 @@ def main():
     )
     args = parser.parse_args()
 
-    # Load model
     from app.core.loader import ModelManager
 
     mm = ModelManager.get_instance()
@@ -662,8 +627,7 @@ def main():
     print(f"Labeled: {len(feature_dict.get_labeled())}")
     print(f"Layers: {feature_dict.layer_count}")
 
-    # Show top features
-    print("\n── Top labeled features ────────────────────")
+    print("\n--- Top labeled features ---")
     for f in feature_dict.get_labeled()[:20]:
         print(
             f"  {f.feature_id:12s} | {f.label:20s} | "

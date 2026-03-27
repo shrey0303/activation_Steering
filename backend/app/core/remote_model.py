@@ -17,11 +17,11 @@ import requests
 from loguru import logger
 
 
-# ── HuggingFace API endpoints ──────────────────────────────────
+# --- HuggingFace API endpoints---
 HF_HUB_API = "https://huggingface.co/api/models"
 HF_INFERENCE_API = "https://router.huggingface.co/hf-inference/models"
 
-# ── Import categories from scanner (single source of truth) ────
+
 from app.core.scanner import CATEGORIES, BEHAVIORAL_ROLES
 
 
@@ -84,7 +84,7 @@ class RemoteModelManager:
             headers["Authorization"] = f"Bearer {token}"
         return headers
 
-    # ── Connect to a remote model ──────────────────────────────
+    # --- Connect to a remote model---
 
     def connect(self, model_name: str, hf_token: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -95,9 +95,9 @@ class RemoteModelManager:
         if hf_token:
             self.hf_token = hf_token
 
-        logger.info(f"🌐 Connecting to remote model: {model_name}")
+        logger.info(f"Connecting to remote model: {model_name}")
 
-        # Fetch model info from Hub API
+
         try:
             resp = requests.get(
                 f"{HF_HUB_API}/{model_name}",
@@ -118,7 +118,7 @@ class RemoteModelManager:
         except Exception as e:
             raise ValueError(f"Failed to connect to HuggingFace Hub: {e}")
 
-        # Fetch config.json
+
         try:
             config_resp = requests.get(
                 f"https://huggingface.co/{model_name}/resolve/main/config.json",
@@ -130,12 +130,12 @@ class RemoteModelManager:
         except Exception as e:
             raise ValueError(f"Failed to fetch config.json for '{model_name}': {e}")
 
-        # Extract architecture info from config
+
         self._extract_architecture()
 
         self.loaded = True
         logger.info(
-            f"✅ Remote model connected: {model_name} | "
+            f"Remote model connected: {model_name} | "
             f"{self.num_layers} layers | hidden_dim={self.hidden_dim} | "
             f"arch={self.architecture}"
         )
@@ -149,11 +149,11 @@ class RemoteModelManager:
 
         cfg = self.config
 
-        # Architecture type
+
         arch_list = cfg.get("architectures", [])
         self.architecture = arch_list[0] if arch_list else cfg.get("model_type", "unknown")
 
-        # Number of layers — different models use different keys
+
         self.num_layers = (
             cfg.get("num_hidden_layers")
             or cfg.get("n_layer")
@@ -162,7 +162,7 @@ class RemoteModelManager:
             or 0
         )
 
-        # Hidden dimension
+
         self.hidden_dim = (
             cfg.get("hidden_size")
             or cfg.get("n_embd")
@@ -170,7 +170,7 @@ class RemoteModelManager:
             or 0
         )
 
-    # ── Remote scan (position-based heuristics) ────────────────
+    # --- Remote scan ---
 
     def remote_scan(self) -> Dict[str, Any]:
         """
@@ -216,7 +216,7 @@ class RemoteModelManager:
             })
 
         elapsed = time.perf_counter() - t0
-        logger.info(f"✅ Remote scan complete: {n} layers in {elapsed:.3f}s")
+        logger.info(f"Remote scan complete: {n} layers in {elapsed:.3f}s")
 
         return {
             "num_layers": n,
@@ -228,7 +228,7 @@ class RemoteModelManager:
             "remote": True,
         }
 
-    # ── Remote generation via Inference API ────────────────────
+    # --- Remote generation ---
 
     def generate(
         self,
@@ -282,7 +282,7 @@ class RemoteModelManager:
 
         elapsed = time.perf_counter() - t0
 
-        # Parse response
+
         if isinstance(result, list) and len(result) > 0:
             text = result[0].get("generated_text", "")
         elif isinstance(result, dict):
@@ -301,7 +301,7 @@ class RemoteModelManager:
             "remote": True,
         }
 
-    # ── Simulated activations ──────────────────────────────────
+    # --- Simulated activations ---
 
     def simulate_activations(self, prompt: str) -> Dict[str, Any]:
         """
@@ -315,7 +315,7 @@ class RemoteModelManager:
         if not self.loaded or self.num_layers == 0:
             return {}
 
-        # Use prompt hash for deterministic but varied activations
+
         prompt_hash = int(hashlib.sha256(prompt.encode()).hexdigest(), 16)
         prompt_len = len(prompt.split())
 
@@ -323,14 +323,14 @@ class RemoteModelManager:
         for idx in range(self.num_layers):
             pos = idx / max(self.num_layers - 1, 1)
 
-            # Base activation curve: higher in middle layers (semantic/reasoning)
+
             base = 0.3 + 0.5 * math.exp(-8 * (pos - 0.45) ** 2)
 
-            # Add prompt-dependent variation
+
             seed = (prompt_hash + idx * 7919) % 10000
             noise = (seed / 10000.0 - 0.5) * 0.3
 
-            # Longer prompts → slightly higher activations in reasoning layers
+
             length_boost = min(prompt_len / 50.0, 1.0) * 0.1 * (1 if 0.4 < pos < 0.7 else 0)
 
             activation = max(0.05, min(1.0, base + noise + length_boost))
@@ -338,7 +338,7 @@ class RemoteModelManager:
 
         return activations
 
-    # ── Info ───────────────────────────────────────────────────
+    # --- Info---
 
     def get_info(self) -> Dict[str, Any]:
         """Return model metadata."""
@@ -366,4 +366,4 @@ class RemoteModelManager:
         self.hidden_dim = 0
         self.architecture = "unknown"
         self.loaded = False
-        logger.info("🌐 Remote model disconnected")
+        logger.info("Remote model disconnected")

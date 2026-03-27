@@ -46,7 +46,7 @@ class PerformanceMonitor:
             "last_tokens_per_sec": round(self._last_tokens_per_sec, 1),
         }
 
-        # GPU metrics (if available)
+
         if torch.cuda.is_available():
             try:
                 gpu_mem = torch.cuda.mem_get_info()
@@ -56,7 +56,7 @@ class PerformanceMonitor:
                     (gpu_mem[1] - gpu_mem[0]) / (1024 ** 2), 1
                 )
             except Exception:
-                pass
+                logger.debug("Failed to read GPU metrics")
 
         return metrics
 

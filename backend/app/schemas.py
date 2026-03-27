@@ -1,6 +1,4 @@
-"""
-Pydantic request / response models for all API endpoints.
-"""
+"""Pydantic request/response models for all API endpoints."""
 
 from __future__ import annotations
 
@@ -11,18 +9,13 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║                      SHARED / COMMON                        ║
-# ╚══════════════════════════════════════════════════════════════╝
-
 class SteeringConfig(BaseModel):
-    """Steering configuration for a single layer."""
     layer: int = Field(..., ge=0, description="Target layer index")
     strength: float = Field(
         0.0, ge=-10.0, le=10.0, description="Intervention strength"
     )
     direction_vector: Optional[List[float]] = Field(
-        None, description="Custom direction vector (optional – auto-detected if null)"
+        None, description="Custom direction vector (auto-detected if null)"
     )
     source: str = Field(
         "mathematical_analysis",
@@ -31,16 +24,13 @@ class SteeringConfig(BaseModel):
 
 
 class PerformanceMetrics(BaseModel):
-    """Shared performance metrics."""
     latency_ms: float = 0.0
     tokens_per_sec: float = 0.0
     memory_used_mb: float = 0.0
     steering_overhead_ms: float = 0.0
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║                     HEALTH CHECK                            ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Health ---
 
 class HealthResponse(BaseModel):
     status: str = "healthy"
@@ -51,9 +41,7 @@ class HealthResponse(BaseModel):
     version: str = "1.0.0"
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║                       MODEL INFO                            ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Model ---
 
 class ModelInfo(BaseModel):
     id: str
@@ -74,7 +62,6 @@ class ModelsResponse(BaseModel):
 
 
 class LoadModelRequest(BaseModel):
-    """Request to load a HuggingFace model by ID."""
     model_name: str = Field(
         ..., min_length=1,
         description="HuggingFace model ID, e.g. 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'",
@@ -91,12 +78,9 @@ class LoadModelResponse(BaseModel):
     load_time_seconds: float = 0.0
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║                      MODEL SCAN                             ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Scan ---
 
 class ScanRequest(BaseModel):
-    """Request to scan a model's layer architecture."""
     model_name: Optional[str] = Field(
         None, description="Model to scan (uses loaded model if null)"
     )
@@ -105,9 +89,8 @@ class ScanRequest(BaseModel):
     )
 
 class LayerProfile(BaseModel):
-    """Profile of a single layer from mathematical analysis."""
     layer_index: int
-    category: str  # embedding | syntactic | semantic | reasoning | integration | output
+    category: str
     confidence: float = Field(..., ge=0.0, le=1.0)
     behavioral_role: str = ""
     weight_stats: Dict[str, float] = {}
@@ -123,24 +106,21 @@ class ScanResponse(BaseModel):
     from_cache: bool = False
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║                      ANALYSIS                               ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Analysis ---
 
 class AnalyzeRequest(BaseModel):
-    """User provides prompt + expected response OR behaviour description."""
     prompt: str = Field(
         "", max_length=5000,
-        description="The prompt sent to the model (required for response mode, optional for behavior mode)"
+        description="The prompt sent to the model"
     )
     expected_response: str = Field(
         "", max_length=5000,
-        description="What the user expects / wants the model to produce"
+        description="What the user expects the model to produce"
     )
     behavior_description: Optional[str] = Field(
         None, max_length=2000,
         description=(
-            "Describe the desired behaviour instead of an exact response. "
+            "Describe desired behaviour instead of exact response. "
             "E.g. 'be rude and dismissive', 'act like a professor'."
         ),
     )
@@ -149,7 +129,6 @@ class AnalyzeRequest(BaseModel):
     )
 
 class LayerAnalysis(BaseModel):
-    """Detailed analysis for a single detected layer."""
     layer_index: int
     anomaly_score: float = 0.0
     confidence: float = 0.0
@@ -170,9 +149,7 @@ class AnalyzeResponse(BaseModel):
     processing_time_ms: float = 0.0
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║                      GENERATION                             ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Generation ---
 
 class GenerateRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=10000)
@@ -192,9 +169,7 @@ class GenerateResponse(BaseModel):
     metrics: Dict[str, Any] = {}
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║                     ACTIVATIONS                             ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Activations ---
 
 class ActivationsRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=10000)
@@ -210,9 +185,7 @@ class ActivationsResponse(BaseModel):
     capture_time_ms: float = 0.0
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║                       PATCHES                               ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Patches ---
 
 class InterventionSpec(BaseModel):
     layer: int
@@ -249,9 +222,7 @@ class PatchListResponse(BaseModel):
     total: int = 0
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║                   WEBSOCKET MESSAGES                        ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- WebSocket ---
 
 class WSGenerateRequest(BaseModel):
     type: str = "generate"
@@ -278,9 +249,7 @@ class WSErrorMessage(BaseModel):
     error: Dict[str, Any] = {}
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║                      ERROR SCHEMA                           ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Error ---
 
 class ErrorResponse(BaseModel):
     error: str

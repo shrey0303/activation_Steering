@@ -1,5 +1,5 @@
 """
-Singleton Model Loader.
+Singleton model loader.
 
 Loads any HuggingFace transformer model with optional 4-bit quantization.
 Auto-detects CUDA / MPS / CPU and keeps a single instance throughout
@@ -18,19 +18,11 @@ from loguru import logger
 
 
 class ModelManager:
-    """
-    Thread-safe singleton that holds the loaded model + tokenizer.
-
-    Usage:
-        mgr = ModelManager.get_instance()
-        mgr.load("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
-        model, tokenizer = mgr.model, mgr.tokenizer
-    """
+    """Thread-safe singleton that holds the loaded model + tokenizer."""
 
     _instance: Optional["ModelManager"] = None
     _lock = threading.Lock()
 
-    # ── Singleton accessor ────────────────────────────────────
     @classmethod
     def get_instance(cls) -> "ModelManager":
         if cls._instance is None:
@@ -47,7 +39,6 @@ class ModelManager:
                 cls._instance.unload()
             cls._instance = None
 
-    # ── Init ──────────────────────────────────────────────────
     def __init__(self) -> None:
         self.model: Any = None
         self.tokenizer: Any = None
@@ -63,7 +54,6 @@ class ModelManager:
         self.memory_mb: float = 0.0
         self._load_lock = threading.Lock()
 
-    # ── Device Detection ──────────────────────────────────────
     @staticmethod
     def detect_device(preference: str = "auto") -> torch.device:
         """Pick the best available device."""
@@ -75,7 +65,6 @@ class ModelManager:
             return torch.device("mps")
         return torch.device("cpu")
 
-    # ── Main Load ─────────────────────────────────────────────
     def load(
         self,
         model_name: str,
@@ -83,23 +72,10 @@ class ModelManager:
         quantize: bool = True,
         quantization_bits: int = 4,
     ) -> None:
-        """
-        Download (if needed) and load a HuggingFace model + tokenizer.
-
-        Parameters
-        ----------
-        model_name : str
-            HuggingFace model identifier, e.g. "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-        device_preference : str
-            "auto" | "cuda" | "mps" | "cpu"
-        quantize : bool
-            Whether to apply 4-bit quantisation via bitsandbytes.
-        quantization_bits : int
-            Quantisation bit depth (4 or 8).
-        """
+        """Download (if needed) and load a HuggingFace model + tokenizer."""
         with self._load_lock:
             if self.loaded and self.model_name == model_name:
-                logger.info(f"Model {model_name} already loaded – skipping")
+                logger.info(f"Model {model_name} already loaded, skipping")
                 return
 
             if self.loaded:
@@ -109,19 +85,16 @@ class ModelManager:
             t0 = time.perf_counter()
             self.device = self.detect_device(device_preference)
             self.device_name = str(self.device)
-            logger.info(f"🔄 Loading {model_name} on {self.device_name}...")
+            logger.info(f"Loading {model_name} on {self.device_name}...")
 
-            # Lazy-import heavy dependencies
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
-            # Tokenizer
             self.tokenizer = AutoTokenizer.from_pretrained(
                 model_name, trust_remote_code=False
             )
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
-            # Model
             load_kwargs: Dict[str, Any] = {
                 "trust_remote_code": True,
                 "low_cpu_mem_usage": True,
@@ -147,7 +120,7 @@ class ModelManager:
                     )
                 except ImportError:
                     logger.warning(
-                        "bitsandbytes not available – loading in full precision"
+                        "bitsandbytes not available, loading in full precision"
                     )
                     load_kwargs["torch_dtype"] = torch.float16
                     load_kwargs["device_map"] = "auto"
@@ -156,14 +129,13 @@ class ModelManager:
                 load_kwargs["device_map"] = "auto"
             elif self.device.type == "mps":
                 load_kwargs["torch_dtype"] = torch.float16
-            # else: CPU – default float32
 
             try:
                 self.model = AutoModelForCausalLM.from_pretrained(
                     model_name, **load_kwargs
                 )
             except torch.cuda.OutOfMemoryError:
-                logger.error("GPU out of memory — falling back to CPU")
+                logger.error("GPU out of memory, falling back to CPU")
                 torch.cuda.empty_cache()
                 self.device = torch.device("cpu")
                 self.device_name = "cpu"
@@ -183,14 +155,12 @@ class ModelManager:
                     low_cpu_mem_usage=True,
                 )
 
-            # Move to device if not already mapped
             if not hasattr(self.model, "hf_device_map"):
                 self.model = self.model.to(self.device)
 
             self.model.eval()
             self.model_name = model_name
 
-            # Extract architecture info
             self._extract_model_info()
 
             elapsed = time.perf_counter() - t0
@@ -198,47 +168,36 @@ class ModelManager:
             self.memory_mb = self._get_memory_usage()
 
             logger.info(
-                f"✅ Model loaded in {elapsed:.1f}s | "
+                f"Model loaded in {elapsed:.1f}s | "
                 f"Layers={self.num_layers} | Hidden={self.hidden_dim} | "
                 f"Device={self.device_name} | Memory={self.memory_mb:.0f}MB"
             )
 
-    # ── Architecture Extraction ───────────────────────────────
     def _extract_model_info(self) -> None:
         """Pull layer count, hidden dim, and architecture type from the model."""
         config = self.model.config
 
-        # Number of layers
         self.num_layers = getattr(
             config, "num_hidden_layers",
             getattr(config, "n_layer",
                     getattr(config, "num_layers", 0))
         )
 
-        # Hidden dimension
         self.hidden_dim = getattr(
             config, "hidden_size",
             getattr(config, "n_embd",
                     getattr(config, "d_model", 0))
         )
 
-        # Architecture name
         self.architecture = getattr(config, "model_type", "unknown")
 
-    # ── Helpers ───────────────────────────────────────────────
     def get_layer_modules(self):
-        """
-        Return the list of transformer layer modules.
-
-        Handles different HF model architectures (LLaMA, GPT-2,
-        Mistral, Phi, etc.).
-        """
+        """Return the list of transformer layer modules. Handles LLaMA, GPT-2, Mistral, Phi, etc."""
         if not self.loaded:
             return []
 
         model = self.model
 
-        # Try common attribute chains
         for attr_path in [
             "model.layers",       # LLaMA, Mistral, Phi
             "transformer.h",     # GPT-2, GPT-Neo
@@ -266,6 +225,7 @@ class ModelManager:
             )
             return param_bytes / (1024 * 1024)
         except Exception:
+            logger.debug("Could not estimate model memory usage")
             return 0.0
 
     def get_info(self) -> Dict[str, Any]:

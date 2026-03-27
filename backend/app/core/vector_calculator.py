@@ -1,20 +1,12 @@
 """
-Contrastive Activation Addition (CAA) — Vector Calculator.
+Contrastive Activation Addition (CAA) vector calculator.
 
-Computes real steering vectors by:
-1. Running positive prompts through the model and capturing activations
-2. Running negative prompts through the model and capturing activations
-3. direction = mean(positive_activations) - mean(negative_activations)
-4. Normalise to unit vector
-
-These vectors represent the semantic direction of a concept
-(e.g., "politeness") in the model's latent space.
+direction = mean(positive_activations) - mean(negative_activations)
+Normalised to unit vector.
 
 References:
-- Turner et al. 2023: "Activation Addition: Steering Language Models
-  Without Optimization"
-- Rimsky et al. 2023: "Steering Llama 2 via Contrastive Activation
-  Addition"
+- Turner et al. 2023: "Activation Addition"
+- Rimsky et al. 2023: "Steering Llama 2 via Contrastive Activation Addition"
 """
 
 from __future__ import annotations
@@ -29,28 +21,15 @@ import numpy as np
 import torch
 from loguru import logger
 
-
-# ── Path to contrastive pairs ─────────────────────────────────
 _DATA_DIR = Path(__file__).parent.parent / "data"
 _PAIRS_FILE = _DATA_DIR / "contrastive_pairs.json"
-
-# ── Cached vectors directory ──────────────────────────────────
 _VECTORS_DIR = _DATA_DIR / "cached_vectors"
 
 
+
+
 class VectorCalculator:
-    """
-    Compute Contrastive Activation Addition (CAA) steering vectors.
-
-    For a given concept (e.g., "politeness") and a target layer:
-      1. Encode N positive prompts → capture hidden states at layer L
-      2. Encode N negative prompts → capture hidden states at layer L
-      3. direction = mean(h⁺) - mean(h⁻)
-      4. Normalise to unit vector
-
-    The resulting vector can be added to activations during inference
-    to steer the model's behaviour.
-    """
+    """Compute CAA steering vectors from contrastive prompt pairs."""
 
     def __init__(self, max_prompts: int = 20) -> None:
         """
@@ -115,7 +94,6 @@ class VectorCalculator:
         hook_handle = None
         captured = {}
 
-        # Find the target layer module
         layer_module = self._get_layer_module(model, layer_idx)
         if layer_module is None:
             raise ValueError(
@@ -124,12 +102,11 @@ class VectorCalculator:
             )
 
         def hook_fn(module, input, output):
-            # Output is typically (hidden_states, ...) or just hidden_states
+            # Output is (hidden_states, ...) or just hidden_states
             if isinstance(output, tuple):
                 hidden = output[0]
             else:
                 hidden = output
-            # Take the mean across the sequence dimension → (hidden_dim,)
             captured["activation"] = hidden.detach().mean(dim=1).squeeze(0)
 
         hook_handle = layer_module.register_forward_hook(hook_fn)
@@ -138,7 +115,6 @@ class VectorCalculator:
             model.eval()
             with torch.no_grad():
                 for prompt in prompts:
-                    # Apply chat template for instruction-tuned models
                     if hasattr(tokenizer, 'chat_template') and tokenizer.chat_template:
                         try:
                             messages = [{"role": "user", "content": prompt}]
@@ -146,6 +122,7 @@ class VectorCalculator:
                                 messages, tokenize=False, add_generation_prompt=True
                             )
                         except Exception:
+                            logger.debug("Chat template failed, using raw prompt")
                             formatted = prompt
                     else:
                         formatted = prompt
@@ -157,7 +134,6 @@ class VectorCalculator:
                         max_length=128,
                         padding=True,
                     )
-                    # Move to model's device
                     device = next(model.parameters()).device
                     inputs = {
                         k: v.to(device) for k, v in inputs.items()
@@ -224,7 +200,6 @@ class VectorCalculator:
             f"({len(pos_prompts)}+ / {len(neg_prompts)}- prompts)"
         )
 
-        # Capture activations for positive and negative prompts
         pos_acts = self._capture_activations(
             model, tokenizer, pos_prompts, layer_idx
         )
@@ -232,12 +207,10 @@ class VectorCalculator:
             model, tokenizer, neg_prompts, layer_idx
         )
 
-        # Compute contrastive direction
         mean_pos = pos_acts.mean(dim=0)
         mean_neg = neg_acts.mean(dim=0)
         direction = mean_pos - mean_neg
 
-        # Normalise to unit vector
         norm = torch.norm(direction)
         if norm > 1e-8:
             direction = direction / norm
@@ -245,7 +218,7 @@ class VectorCalculator:
         elapsed = time.perf_counter() - t0
 
         logger.info(
-            f"✅ CAA vector computed for '{concept}' @ layer {layer_idx} "
+            f"CAA vector computed for '{concept}' @ layer {layer_idx} "
             f"in {elapsed:.2f}s (dim={direction.shape[0]}, norm={float(norm):.4f})"
         )
 
@@ -335,7 +308,7 @@ class VectorCalculator:
         - BERT: model.encoder.layer[idx]
         - GPT-Neo: model.gpt_neox.layers[idx] or model.transformer.h[idx]
         """
-        # Try common paths
+
         paths_to_try = [
             ("model", "layers"),           # LLaMA, Mistral, Qwen
             ("transformer", "h"),          # GPT-2, GPT-J

@@ -16,9 +16,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  EVALUATOR METRICS                                          ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- EVALUATOR METRICS ---
 
 
 class TestEvaluatorMetrics:
@@ -117,9 +115,7 @@ class TestEvaluatorMetrics:
         assert anchors == []
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  INTERPRETER                                                ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- INTERPRETER ---
 
 
 class TestInterpreter:
@@ -151,9 +147,7 @@ class TestInterpreter:
         assert result is not None
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  API SCHEMAS                                                ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- API SCHEMAS ---
 
 
 class TestSchemas:
@@ -187,9 +181,7 @@ class TestSchemas:
         assert cfg.direction_vector == [0.1, 0.2, 0.3]
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  STATISTICAL UTILITIES                                      ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- STATISTICAL UTILITIES ---
 
 
 class TestStatUtils:

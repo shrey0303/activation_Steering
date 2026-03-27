@@ -62,7 +62,7 @@ _interpreter = ResponseInterpreter()
 _vector_calc = VectorCalculator(max_prompts=20)
 _feature_dict: FeatureDictionary | None = None
 
-# ── Analysis cache ────────────────────────────────────────────
+# --- Analysis Cache ---
 # Stores the last behavior description from analyze so export can
 # pick the semantically closest CAA concept instead of guessing.
 _last_analysis: Dict[str, Any] = {}
@@ -120,10 +120,6 @@ def _match_behavior_to_concept(behavior: str) -> str:
 
 
 
-def _get_model_manager(request: Request) -> ModelManager:
-    """Return the model manager instance. Does NOT auto-load any model."""
-    mm = ModelManager.get_instance()
-    return mm
 
 
 def _require_model_loaded() -> ModelManager:
@@ -209,7 +205,6 @@ async def list_models(request: Request):
 
 import threading
 
-# Module-level loading state
 _load_state = {
     "status": "idle",   # idle | loading | done | error
     "message": "",
@@ -264,7 +259,6 @@ async def load_model_endpoint(body: LoadModelRequest, request: Request):
                 "message": f"Already loading {_load_state['model_name']}...",
             }
 
-    # Start background thread
     thread = threading.Thread(
         target=_background_load,
         args=(body.model_name, body.device, body.quantize, body.quantization_bits, request.app.state),
@@ -298,7 +292,6 @@ async def load_model_status():
             "num_layers": mm.num_layers,
             "hidden_dim": mm.hidden_dim,
         }
-        # Reset state for next load
         _load_state["status"] = "idle"
 
     return state
@@ -331,7 +324,6 @@ async def scan_model(body: ScanRequest, request: Request):
     scanner = LayerScanner(mm)
     current_hash = scanner.get_scan_hash()
 
-    # Check cache
     if not body.force_rescan:
         profile = await db.get_model_profile(mm.model_name)
         if profile and profile.get("scan_hash") == current_hash:
@@ -371,7 +363,6 @@ async def scan_model(body: ScanRequest, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
-    # Save to SQLite
     profile_id = await db.save_model_profile(
         model_name=mm.model_name,
         architecture=mm.architecture,
@@ -395,9 +386,7 @@ async def scan_model(body: ScanRequest, request: Request):
     )
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  4. ANALYZE (Prompt + Expected Response → Layers)           ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Analyze ---
 
 @router.post("/api/v1/analyze", response_model=AnalyzeResponse, tags=["Analysis"])
 async def analyze(body: AnalyzeRequest, request: Request):
@@ -483,11 +472,11 @@ async def analyze(body: AnalyzeRequest, request: Request):
                 if dv is not None:
                     _last_analysis["vectors"][r.layer_index] = dv
                     logger.info(
-                        f"  ✅ Layer {r.layer_index}: direction vector computed "
+                        f"  Layer {r.layer_index}: direction vector computed "
                         f"(dim={len(dv) if isinstance(dv, list) else 'tensor'})"
                     )
             except Exception as e:
-                logger.warning(f"  ⚠ Layer {r.layer_index}: vector computation failed: {e}")
+                logger.warning(f"  Layer {r.layer_index}: vector computation failed: {e}")
 
         logger.info(
             f"Cached analysis: '{behavior_text}' → {len(_last_analysis['vectors'])} "
@@ -596,9 +585,7 @@ async def generate(body: GenerateRequest, request: Request):
     )
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  6. CAPTURE ACTIVATIONS (for heatmap)                       ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Capture Activations ---
 
 @router.post(
     "/api/v1/activations",
@@ -627,9 +614,7 @@ async def capture_activations(body: ActivationsRequest, request: Request):
     )
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  7. PATCH EXPORT                                            ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Patch Export ---
 
 @router.post(
     "/api/v1/patches/export",
@@ -644,7 +629,7 @@ async def export_patch(body: PatchExportRequest, request: Request):
 
     patch_id = str(uuid4())
 
-    # ── Auto-compute direction vectors ─────────────────────────
+    # --- Auto-compute direction vectors ---
     # Map layer categories → best CAA concept for vector computation
     CATEGORY_TO_CONCEPT = {
         "style_personality": "politeness",
@@ -670,7 +655,7 @@ async def export_patch(body: PatchExportRequest, request: Request):
         direction_vector = i.direction_vector
 
         if direction_vector is None:
-            # ── Strategy 0: Pull from analyze cache (INSTANT) ──
+            # --- Strategy 0: Pull from analyze cache ---
             # The analyze endpoint pre-computes vectors for all
             # recommended layers. This is the primary path.
             cached_vectors = _last_analysis.get("vectors", {})
@@ -682,7 +667,7 @@ async def export_patch(body: PatchExportRequest, request: Request):
                 )
 
         if direction_vector is None:
-            # ── Strategy 1: Pull from active steering hooks ────
+            # --- Strategy 1: Pull from active steering hooks ---
             # If the user steered with a custom vector, grab it.
             try:
                 engine = SteeringEngine.get_instance(mm)
@@ -704,7 +689,7 @@ async def export_patch(body: PatchExportRequest, request: Request):
             except Exception as e:
                 logger.debug(f"Could not pull vector from hooks: {e}")
 
-        # ── Strategy 2: CAA auto-compute (LAST RESORT) ────────
+        # --- Strategy 2: CAA auto-compute ---
         # Only runs if analyze was never called and no hooks exist.
         if direction_vector is None and mm.loaded and mm.model is not None:
             # Use cached behavior from last analyze call for concept matching
@@ -781,9 +766,7 @@ async def export_patch(body: PatchExportRequest, request: Request):
     )
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  7b. CONCEPT STEERING VECTORS (CAA)                         ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Concept Steering Vectors ---
 
 @router.get("/api/v1/concepts", tags=["Concepts"])
 async def list_concepts():
@@ -812,7 +795,6 @@ async def compute_concept_vector(request: Request):
             detail="Both 'concept' and 'layer' are required.",
         )
 
-    # Check cache first
     cached = _vector_calc.load_cached_vector(
         concept, layer_idx, mm.model_name
     )
@@ -831,7 +813,6 @@ async def compute_concept_vector(request: Request):
             ),
             timeout=_COMPUTE_TIMEOUT,
         )
-        # Cache for reuse
         _vector_calc.cache_vector(
             concept, layer_idx, mm.model_name, result
         )
@@ -842,9 +823,7 @@ async def compute_concept_vector(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  7c. EVALUATION (BEFORE / AFTER COMPARISON)                 ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Evaluation ---
 
 @router.post("/api/v1/evaluate", tags=["Evaluation"])
 async def evaluate_steering(request: Request):
@@ -904,9 +883,7 @@ async def evaluate_steering(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  8. LIST & GET PATCHES                                      ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- List & Get Patches ---
 
 @router.get("/api/v1/patches", response_model=PatchListResponse, tags=["Patches"])
 async def list_patches(request: Request):
@@ -968,9 +945,7 @@ async def download_patch(patch_id: str, request: Request):
     )
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  9. SYSTEM METRICS                                          ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- System Metrics ---
 
 @router.get("/api/v1/metrics", tags=["System"])
 async def get_metrics():
@@ -978,9 +953,7 @@ async def get_metrics():
     return _monitor.get_metrics()
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  10. REMOTE MODEL (HuggingFace Inference API)               ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Remote Model ---
 
 from app.core.remote_model import RemoteModelManager
 
@@ -1073,9 +1046,7 @@ async def remote_activations(request: Request):
     return {"activations": activations, "remote": True, "estimated": True}
 
 
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  FEATURE DICTIONARY (PCA-based — Phase 1)                   ║
-# ╚══════════════════════════════════════════════════════════════╝
+# --- Feature Dictionary ---
 
 
 @router.post("/api/v1/features/extract", tags=["Features"])

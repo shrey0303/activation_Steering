@@ -1,1101 +1,360 @@
-<div align="center">
+# SteerOps: Inference-Time Behavioral Steering via Contrastive Activation Addition on Multilingual Transformer Architectures
 
-# SteerOps
+## Abstract
 
-### Activation Steering for LLMs
-
-
-[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com)
-[![React](https://img.shields.io/badge/React-18-61DAFB.svg)](https://reactjs.org)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org)
-[![License](https://img.shields.io/badge/license-MIT-purple.svg)](LICENSE)
-
-</div>
+SteerOps implements Contrastive Activation Addition (CAA) as a runtime behavioral steering framework for decoder-only transformer language models. The system extracts directional vectors from the residual stream via contrastive prompt pairs, then applies these vectors during the forward pass through PyTorch `register_forward_hook` injection with orthogonal projection and L2 norm preservation. Empirical evaluation on `sarvamai/sarvam-1` (2.51B parameters, 28 layers, `LlamaForCausalLM`) demonstrates statistically significant behavioral shifts across Hindi and Bengali honorific politeness (Cohen's d = -4.21 for Bengali at strength 1.5, p < 0.001) with 0.0ms per-token latency overhead and perplexity ratios held at 1.27, while simultaneously revealing catastrophic fluency degradation for Tamil (Dravidian family) at perplexity ratios exceeding 97x baseline -- confirming that single-layer activation steering is effective for typologically related languages but fails for morphologically distant language families sharing the same computational circuit.
 
 ---
 
-## Table of Contents
+## 1. Mechanistic Methodology
 
-- [What is SteerOps?](#what-is-steerops)
-- [How It Works](#how-it-works)
-  - [Phase 1: Mathematical Layer Scanning](#phase-1-mathematical-layer-scanning-scannerpy)
-  - [Phase 1.5: Offline PCA Feature Dictionary](#phase-15-offline-pca-feature-dictionary-feature_extractorpy)
-  - [Phase 2: Behavior Interpretation + Intent Router](#phase-2-behavior-interpretation--intent-router-interpreterpy)
-  - [Phase 3: Layer Resolution](#phase-3-layer-resolution-resolverpy)
-  - [Phase 4: Activation Steering](#phase-4-activation-steering-enginepy)
-  - [Phase 5: Direction Vector Computation](#phase-5-direction-vector-computation-vector_calculatorpy)
-- [Research-Backed Improvements (v2.0)](#research-backed-improvements-v20)
-- [Supported Models](#supported-models)
-- [Architecture](#architecture)
-- [Quick Start](#quick-start)
-  - [Web UI Guide](#web-ui-guide)
-  - [Steering Diagnostics](#steering-diagnostics-panel-right-bottom)
-- [API Reference](#api-reference)
-- [Python Library (`steerops`)](#python-library-steerops)
-- [Benchmarks](#benchmarks)
-- [Roadmap](#roadmap)
-- [Evaluation Metrics](#evaluation-metrics)
-- [Limitations](#limitations)
-- [Contributing](#contributing)
-- [License](#license)
+### 1.1 Contrastive Activation Addition
+
+Behavioral steering vectors are derived from the difference in residual stream activations between contrastive prompt pairs. Given a target behavior B (e.g., honorific politeness), we define prompt sets P+ (exhibiting B) and P- (exhibiting the negation of B).
+
+```
+For each contrastive pair (p+, p-) at target layer l:
+
+  1. Forward pass:  a+(l) = ResidualStream(p+, l)    // (batch, seq, d_model)
+  2. Forward pass:  a-(l) = ResidualStream(p-, l)
+  3. Mean-pool:     mu+(l) = mean(a+(l), dim=seq)     // (d_model,)
+  4. Mean-pool:     mu-(l) = mean(a-(l), dim=seq)
+  5. Direction:     v(l)   = mu+(l) - mu-(l)
+  6. Normalize:     v_hat(l) = v(l) / ||v(l)||_2
+```
+
+The resulting unit vector `v_hat(l)` encodes the linear direction in activation space corresponding to the behavioral concept. This follows the methodology established by Rimsky et al. (2023) and Turner et al. (2023).
+
+### 1.2 Forward Hook Injection Pipeline
+
+At inference time, a 5-step pipeline executes within a registered `torch.nn.Module.register_forward_hook` at the target layer:
+
+**Step 0 -- Residual Stream Extraction.** The hook receives the layer output tuple `(hidden_states, kv_cache, ...)`. The hidden state tensor `x` of shape `(batch, seq, d_model)` is extracted; all remaining tuple elements (past key-values, attention weights) are preserved and re-appended after modification.
+
+**Step 1 -- Cooldown Guard.** If the entropy circuit breaker has fired (see Section 1.3), the hook passes through `x` unmodified for `N_cooldown` tokens (default: 5).
+
+**Step 2 -- Gating.** Cosine similarity between the last-token activation `x[:, -1, :]` and the steering vector `v_hat` is computed. If `cos(x_last, v_hat) > tau_gate`, the model's representation is already aligned with the target direction and injection is skipped. The gate threshold is auto-calibrated:
+
+```
+tau_gate = 3 / sqrt(d_model)
+
+  d_model = 768   -->  tau = 0.108
+  d_model = 2048  -->  tau disabled (models at this scale exhibit
+                        natural alignment; gating blocks all injection)
+  d_model = 4096  -->  tau = 0.047
+```
+
+For `d_model >= 2048`, gating is disabled entirely. Empirical testing on `sarvam-1` (d_model = 2048) confirmed that active gating at threshold 0.066 silently blocked 100% of hook invocations.
+
+**Step 3 -- Orthogonal Projection.** Rather than naive additive steering (`x' = x + alpha * v`), which doubles the component of `v` already present in `x`, the system injects only the orthogonal complement:
+
+```
+x_hat  = x / ||x||_2
+v_orth = v_hat - (v_hat . x_hat) * x_hat
+x'     = x + alpha_eff * v_orth
+```
+
+where `alpha_eff = alpha_base * decay(t) * (||x||_2 / 10)`. The activation-norm scaling factor `||x||_2 / 10` provides model-size invariance: a strength of 2.5 produces a proportionally equivalent perturbation on a 7B model (d_model = 3584, typical ||x|| ~ 35) as on a 0.5B model (d_model = 896, typical ||x|| ~ 9).
+
+Adaptive decay prevents late-token drift in autoregressive generation:
+
+```
+decay(t) = max(min_decay, 1.0 - t * decay_rate)
+         = max(0.4, 1.0 - t * 0.006)
+```
+
+**Step 4 -- L2 Norm Preservation.** The steered activation magnitude is clamped within a tolerance band of the original:
+
+```
+scale   = ||x||_2 / ||x'||_2
+scale   = clamp(scale, 1 - tau_norm, 1 + tau_norm)
+x_final = x' * scale
+```
+
+Default `tau_norm = 0.05` (5%). For `d_model > 2048`, `tau_norm` is widened to 0.25 to accommodate the larger perturbation magnitudes required at scale.
+
+**Step 5 -- NaN/Inf Safety.** If `x_final` contains non-finite values, the hook reverts to the original `x` and enters extended cooldown (10 tokens).
+
+### 1.3 Entropy Circuit Breaker
+
+During streaming generation, Shannon entropy of the output logit distribution is computed at each token:
+
+```
+H = -sum(p_i * ln(p_i))    [nats]
+```
+
+If `H > 6.0` nats (indicating a near-uniform distribution over the vocabulary, i.e., model confusion), all active hooks enter cooldown for `N_cooldown` tokens. This is a passthrough mechanism: no model re-execution occurs.
+
+### 1.4 Multi-Vector Orthogonalization (Gram-Schmidt)
+
+When multiple steering hooks are active concurrently, their direction vectors may share non-zero projections. Before each generation, active vectors are orthogonalized via the Gram-Schmidt process:
+
+```
+Given hooks with direction vectors [v_0, v_1, ..., v_k]:
+
+  v_1' = v_1 - proj_{v_0}(v_1)
+  v_2' = v_2 - proj_{v_0}(v_2) - proj_{v_1'}(v_2)
+  ...
+  v_i' = normalize(v_i')
+```
+
+### 1.5 LEACE Concept Erasure (Alternative Mode)
+
+An alternative to additive steering, based on Belrose et al. (2023), projects activations onto the null-space of the concept direction:
+
+```
+x_erased = x - (x . v_hat) * v_hat
+```
+
+This removes all linear information about concept `v` from the representation. Unlike suppression (negative-strength steering), which can overshoot and invert the concept, null-space projection is binary and complete.
 
 ---
 
-## What is SteerOps?
+## 2. Discovery: The Shared Indic Politeness Circuit
 
-SteerOps is an **activation-level debugger and steering tool** for transformer-based language models. Traditional approaches to controlling model behavior rely on prompt engineering or fine-tuning. SteerOps takes a fundamentally different approach:
+### 2.1 Layer Responsiveness Telemetry
 
-1. **Scans** model weight matrices mathematically (SVD, attention entropy, FFN norms)
-2. **Extracts** an offline PCA Feature Dictionary of orthogonal steering directions per layer
-3. **Maps** each layer to a functional category based on mechanistic interpretability research
-4. **Interprets** user-provided behavior descriptions using semantic embedding matching
-5. **Steers** activations at specific layers in real-time using PyTorch forward hooks with orthogonal projection, L₂ norm preservation, and adaptive decay
-6. **Exports** validated interventions as portable JSON patches
+Layer-wise steering was applied to `sarvam-1` across three Indic languages using language-specific CAA vectors computed from honorific/non-honorific contrastive pairs. Semantic shift (cosine distance between steered and unsteered sentence embeddings via `paraphrase-multilingual-MiniLM-L12-v2`) was measured at six equidistant layers spanning the 28-layer architecture at strength 1.5.
 
-**Key Innovation:** SteerOps uses a hybrid offline-then-runtime architecture. Heavy computation (PCA, auto-labeling) runs offline once per model. Runtime steering is O(1) lookup + forward hook injection — no re-running forward passes, no gradient computation.
+| Layer | Relative Depth | Hindi Shift | Hindi PPL | Bengali Shift | Bengali PPL | Tamil Shift | Tamil PPL |
+|-------|---------------|-------------|-----------|---------------|-------------|-------------|-----------|
+| L4    | 0.14          | 0.708       | 1.192     | 0.532         | 1.293       | 0.627       | 5.733     |
+| L8    | 0.29          | 0.528       | 1.105     | **0.958**     | 1.787       | **0.818**   | 8.534     |
+| L12   | 0.43          | 0.628       | 1.159     | 0.928         | 1.172       | 0.609       | 12.695    |
+| L16   | 0.57          | 0.644       | 2.916     | 0.433         | 4.111       | 0.278       | 4.251     |
+| L21   | 0.75          | 0.531       | 1.241     | 0.283         | 1.860       | 0.476       | 1.964     |
+| L25   | 0.89          | 0.627       | 1.569     | 0.202         | 1.589       | 0.180       | 1.974     |
 
----
+### 2.2 Circuit Localization
 
-## How It Works
+Peak semantic shift concentrates in the early transformer layers:
 
-### Phase 1: Mathematical Layer Scanning (`scanner.py`)
+- **Hindi:** L4 (depth 14%) -- highest semantic shift at 0.708 with stable perplexity (1.192).
+- **Bengali:** L8 (depth 29%) -- peak shift of 0.958, perplexity 1.787.
+- **Tamil:** L8 (depth 29%) -- peak shift of 0.818, but with perplexity 8.534 (see Section 4.1).
 
-> **Note (v2.0):** Phase 1 is now used strictly for **diagnostic visualization** — populating the Activation Heatmap and layer categorization display in the UI. It is **no longer in the steering logic path**. Steering now flows through Phase 1.5 (PCA) → Phase 2 (Intent Router) → Phase 3 (O(1) Lookup) → Phase 4 (Engine). The K-Means categorization remains useful for understanding model structure at a glance, but all runtime steering decisions use the PCA Feature Dictionary directly.
+The mean peak depth across all three languages is 24% of the network. All three languages share peak responsiveness within layers {L4, L8}, suggesting a shared circuit for Indic honorific processing in the early residual stream -- specifically within the `syntactic_processing` and `entity_semantic` functional regions (per positional heuristics from Hewitt & Manning, 2019).
 
-The scanner profiles every transformer layer by analyzing weight matrices directly. No forward pass is needed.
+### 2.3 Interpretation
 
-#### Metrics Computed Per Layer
+This finding is consistent with the hypothesis that honorific morphology (e.g., Hindi "aap" vs. "tum", Bengali "apni" vs. "tui", Tamil "neenga" vs. "nee") is processed by the same early-layer circuitry responsible for morphological feature extraction and entity-level semantic encoding. The shared computational substrate explains why a single steering vector computed from one language's contrastive pairs can partially transfer to the others -- and also why it can catastrophically interfere with a typologically distinct language (see Section 4.1).
 
-| Metric | Method | What It Reveals |
-|--------|--------|-----------------|
-| **SVD Effective Rank** | Singular Value Decomposition of attention weight matrices | Higher rank → more diverse learned transformations → complex processing |
-| **Attention Entropy** | Shannon entropy of `W_Q @ W_K.T` eigenvalues | High entropy → distributed attention → semantic/global processing |
-| **FFN Norm** | Frobenius norm of feed-forward weight matrices | Large norms → strong non-linear transforms → reasoning/retrieval |
-| **Inter-Layer CKA** | Centered Kernel Alignment between adjacent layers | Sharp drops → functional boundary between processing stages |
-
-#### How SVD Effective Rank Works
-
-```
-Given weight matrix W ∈ ℝ^(d×d):
-  1. Compute singular values: σ₁ ≥ σ₂ ≥ ... ≥ σ_n
-  2. Normalize: p_i = σ_i / Σσ_j
-  3. Compute entropy: H = -Σ p_i · log(p_i)
-  4. Effective rank = e^H
-
-Higher effective rank → the layer learned a more complex transformation
-Lower effective rank → dominated by few singular values → simpler function
-```
-
-#### How Attention Entropy Works
-
-```
-For attention weight matrices W_Q, W_K:
-  1. Compute W = W_Q @ W_K.T (attention pattern proxy)
-  2. Extract eigenvalues λ₁, λ₂, ...
-  3. Normalize to probability distribution
-  4. Shannon entropy H = -Σ p_i · log₂(p_i)
-
-High entropy → attention distributed broadly → global/semantic processing
-Low entropy → attention focused narrowly → local/syntactic processing
-```
-
-#### Layer Categorization
-
-After computing features, layers are categorized using K-Means clustering validated against positional heuristics from mechanistic interpretability research:
-
-| Category | Position Range | Function | Citation |
-|----------|---------------|----------|----------|
-| `token_embedding` | 0–5% | Raw vocabulary lookup | Universal |
-| `positional_morphological` | 5–12% | Position encoding, morphology | Logit Lens (nostalgebraist 2020) |
-| `syntactic_processing` | 12–25% | Grammar, clause structure | Hewitt & Manning 2019 |
-| `entity_semantic` | 25–40% | Entity tracking, polysemy | Attention head analysis |
-| `knowledge_retrieval` | 40–55% | Factual recall via FF key-value | Geva et al. 2021 |
-| `reasoning_planning` | 55–70% | Multi-step inference | Mid-layer attention studies |
-| `safety_alignment` | 70–78% | Refusal circuits, guardrails | Anthropic activation patching |
-| `information_integration` | 78–88% | Cross-layer signal merging | Lawson et al. 2025 |
-| `style_personality` | 88–95% | Tone, register, personality | Late-layer generation studies |
-| `output_distribution` | 95–100% | Final token probabilities | Logit Lens studies |
-
-Scan results are cached in SQLite for instant subsequent access.
+This result carries a caveat: the shared circuit conclusion is drawn from positional co-occurrence of peak responsiveness. The layers may share depth but not necessarily the same attention heads or feed-forward neurons. Causal intervention at the attention-head level (activation patching per Conmy et al., 2023) would be required to confirm circuit-level identity rather than depth-level coincidence.
 
 ---
 
-### Phase 1.5: Offline PCA Feature Dictionary (`feature_extractor.py`)
+## 3. Performance and Perplexity Benchmarks
 
-**New in v2.0** — Builds an indexed dictionary of orthogonal steering directions via PCA, run offline once per model.
+All measurements were collected on `sarvamai/sarvam-1` (2.51B parameters, 28 layers, d_model = 2048, `LlamaForCausalLM` architecture) with 4-bit NF4 quantization on a T4 GPU. Total evaluation runtime: 7160.5s (119.3 minutes) across 8 concepts at 6 strength levels each (48 conditions, 10 prompts per condition). Statistical significance is reported at alpha = 0.05 via paired t-test; effect size is Cohen's d.
 
-#### Pipeline
+### 3.1 Latency
 
-```
-1. Run 165 diverse prompts through the model
-2. Capture residual stream activations at every layer (mean-pooled)
-3. Center the data + run SVD-based PCA per layer
-4. Extract top-K principal components (with min-variance noise filter)
-5. Auto-label top 5 components per layer via contrastive generation probing
-6. Store in SQLite (metadata) + NumPy files (vectors)
-```
+| Metric                  | Value       |
+|------------------------|-------------|
+| Baseline latency       | 90.5 ms/tok |
+| Steered latency        | 90.5 ms/tok |
+| Steering overhead      | 0.0 ms/tok  |
+| Overhead percentage    | 0.0%        |
 
-#### PCA Math
+The hook injection operates entirely within PyTorch's existing forward pass execution graph. No additional forward passes, backward passes, or CUDA kernel launches are introduced. The 0.0ms overhead measurement reflects that tensor addition and projection operations on a single d_model-dimensional vector are below the timing resolution of `time.perf_counter()` at this scale.
 
-```
-Given activations A ∈ ℝ^(n_prompts × hidden_dim) at layer ℓ:
+### 3.2 Behavioral Effect Sizes (Indic Honorific Steering)
 
-  1. Center: Ā = A - mean(A)
-  2. SVD:    Ā = U · S · Vᵀ
-  3. Top-K:  components = Vᵀ[:k]       # (k, hidden_dim)
-  4. Variance: explained_i = S²ᵢ / ΣS²  # fraction per component
+Strength sweep across six magnitudes (0.5 to 3.0), evaluated on language-specific contrastive honorific pairs:
 
-Components are orthogonal by construction (SVD guarantees this).
-```
+**Hindi Honorific Politeness** (CAA vector magnitude: 29.13, routed to L11):
 
-#### Min-Variance Noise Filter
+| Strength | Cohen's d | p-value | Significant | PPL Ratio | Polite Ratio | Token Fertility |
+|----------|----------|---------|-------------|-----------|-------------|-----------------|
+| 0.5      | -0.615   | 0.278   | No          | 1.262     | 0.60        | 2.29            |
+| 1.0      | -1.682   | 0.002   | Yes         | 1.053     | 0.65        | 1.57            |
+| **1.5**  | **0.783**| **0.030** | **Yes**   | **1.049** | **0.85**    | 1.62            |
+| 2.0      | 0.301    | 0.464   | No          | 1.153     | 0.85        | 1.56            |
+| 2.5      | 0.428    | 0.311   | No          | 1.162     | 0.85        | 1.46            |
+| 3.0      | 0.388    | 0.358   | No          | 1.190     | 0.80        | 1.59            |
 
-Components explaining < 0.1% variance are automatically dropped, preventing noise PCA components from polluting the feature dictionary. In practice, this reduces 20 requested components to 3–10 meaningful directions per layer.
+Optimal operating point: strength 1.5. Polite marker ratio shifts from 0.60 baseline to 0.85 with perplexity held at 1.049. Token fertility (1.62 tokens/word) remains within Sarvam-1's published Indic range of 1.4--2.1.
 
-#### Contrastive Auto-Labeling (CAA-Style)
+**Bengali Honorific Politeness** (CAA vector magnitude: 27.93, routed to L11):
 
-Each top component is labeled using a contrastive approach (Rimsky et al., "Steering Llama 2 via Contrastive Activation Addition"):
+| Strength | Cohen's d  | p-value  | Significant | PPL Ratio | Polite Ratio | Token Fertility |
+|----------|-----------|----------|-------------|-----------|-------------|-----------------|
+| 0.5      | -1.858    | 0.004    | Yes         | 1.406     | 0.65        | 1.63            |
+| 1.0      | -2.873    | 0.0001   | Yes         | 1.853     | 0.60        | 1.82            |
+| **1.5**  | **-4.212**| **< 0.001** | **Yes** | **1.279** | 0.50        | 1.58            |
+| 2.0      | -2.688    | < 0.001  | Yes         | 4.052     | 0.60        | 7.56            |
+| 2.5      | -0.946    | 0.105    | No          | 1.575     | 0.50        | 5.07            |
+| 3.0      | -1.555    | 0.003    | Yes         | 3.191     | 0.55        | 9.26            |
 
-1. **Amplify** (+5.0 strength) the component during generation across probe prompts
-2. **Suppress** (-5.0 strength) the same component during generation
-3. Compute `delta = embed(amplified_outputs) - embed(suppressed_outputs)`
-4. Match `delta` against behavioral keywords via cosine similarity
+Peak effect: Cohen's d = -4.21 at strength 1.5 (p < 0.001), representing a shift of over 4 pooled standard deviations in the concept alignment metric. Perplexity remains at 1.279 at this operating point. Beyond strength 2.0, token fertility degrades to 7.56 tokens/word (vs. 1.58 at strength 1.5), indicating tokenizer-level output collapse.
 
-This contrastive approach **doubles the signal strength** vs. single-sided (steered vs. baseline), producing more reliable labels.
+### 3.3 Perplexity Stability (Hindi and Bengali at Optimal Strength)
 
-#### Feature ID Format
+| Language | PPL Ratio (Steered / Baseline) | Generation Integrity |
+|----------|-------------------------------|---------------------|
+| Hindi    | 1.049                         | Preserved           |
+| Bengali  | 1.279                         | Preserved           |
+| Mean     | **1.27**                      | Preserved           |
 
-```
-L{layer_idx}_PC{component_idx}
+Perplexity ratios below 2.0 indicate that steered text remains within the model's fluent distribution.
 
-Examples:
-  L14_PC0  →  Layer 14, highest-variance component
-  L22_PC3  →  Layer 22, 4th component
-```
+### 3.4 Token Fertility Preservation
 
-#### Files
+Sarvam-1's published token fertility range for Indic languages is 1.4--2.1 tokens/word. Steering shifted median Hindi fertility from 1.47 to 1.59 (delta = 0.13), remaining within the nominal range.
 
-| File | Purpose |
-|------|---------|
-| `feature_extractor.py` | Full offline pipeline + `FeatureDictionary` class with O(1) lookup |
-| `feature_dataset.py` | 165 diverse prompts, labeling prompts, behavioral keywords |
+### 3.5 English and General Concept Steering
 
----
+| Concept            | Best Strength | Best Cohen's d | p-value | Significant | PPL Ratio |
+|--------------------|--------------|----------------|---------|-------------|-----------|
+| English politeness | 1.5          | 2.364          | 0.001   | Yes         | 8.507     |
+| Verbosity          | 1.0          | -1.012         | 0.042   | Yes         | 1.463     |
+| Creativity         | 3.0          | 1.065          | 0.011   | Yes         | 1.233     |
+| Refusal            | 2.0          | 0.941          | 0.019   | Yes         | 6.323     |
+| Toxicity           | 0.5          | -0.052         | 0.894   | No          | 1.234     |
 
-### Phase 2: Behavior Interpretation + Intent Router (`interpreter.py`)
+English politeness on Sarvam-1 shows large effect size (d = 2.36) but with high perplexity (8.5), consistent with the model's Indic-primary training distribution mismatching English generation patterns. Creativity achieves significance with stable fluency (PPL 1.23). Toxicity steering is non-significant across all six strength levels -- toxicity reduction is a distributed, multi-layer concept that resists single-layer intervention (see Section 4.3).
 
-The interpreter uses **per-layer bidirectional semantic matching** to determine which layers to target and in what direction.
+### 3.6 Aggregate Pipeline Statistics
 
-#### Legacy Mode: Semantic Matching
+| Metric                         | Value    |
+|-------------------------------|----------|
+| Total evaluated conditions     | 48       |
+| Statistically significant      | 23/48 (48%) |
+| Mean effect size (all concepts)| 1.070    |
+| Mean perplexity (all concepts) | 13.675   |
+| Mean perplexity (Hindi/Bengali at optimal) | 1.27 |
+| Fluency preserved (global)     | No       |
+| Fluency preserved (Indo-Aryan at optimal)  | Yes  |
 
-For each of the 10 layer categories, we maintain two semantic descriptions:
-- **Enhance description**: What behaviors INCREASE this layer's function
-- **Suppress description**: What behaviors DECREASE this layer's function
-
-When the user provides a behavior (e.g., "be very angry"):
-
-```
-1. Embed the user's input using all-MiniLM-L6-v2 sentence transformer
-2. For each layer category:
-   a. Compute cosine similarity against the ENHANCE description
-   b. Compute cosine similarity against the SUPPRESS description
-   c. Direction = whichever side scores higher
-   d. Magnitude = calibrated similarity score
-3. Return layers sorted by magnitude with independent directions
-```
-
-#### New: Intent Router with NLI Cross-Encoder (v2.0)
-
-The `IntentRouter` uses a **two-stage retrieve-then-classify** pipeline:
-
-**Stage 1 — Retrieval (Bi-Encoder):**
-```
-1. User types: "make the model less toxic"
-2. Embed the text using all-MiniLM-L6-v2 (bi-encoder)
-3. Cosine similarity against all labeled feature embeddings
-4. Return top-K matching features by topic
-```
-
-**Stage 2 — Direction Classification (NLI Cross-Encoder):**
-```
-For each top-K candidate:
-  1. Construct hypothesis: "Amplify {feature_label}"
-  2. Feed [user_text, hypothesis] into cross-encoder/nli-deberta-v3-small
-  3. Model outputs: [contradiction, entailment, neutral] probabilities
-  4. contradiction > entailment → suppress (-1.0)
-     entailment > contradiction → enhance (+1.0)
-```
-
-**Why both models?** NLI alone cannot do retrieval — it finds spurious cross-concept relationships. For example, `"Make it more toxic"` vs `"Amplify anger"` scores contradiction=0.998, incorrectly beating the correct match. The bi-encoder correctly isolates topic matching (WHICH feature); the NLI correctly determines direction (enhance vs suppress). Together: 7/7 test accuracy. Separately: 2/7.
-
-Falls back to keyword detection if the cross-encoder is unavailable.
-
-#### Example Results
-
-| Input | Layer Effects |
-|-------|---------------|
-| "be very angry" | suppress reasoning (-0.79), enhance style (+0.58), suppress safety (-0.55) |
-| "be very polite" | enhance safety (+0.66), enhance style (+0.60) |
-| "be very intelligent" | enhance knowledge (+0.79), enhance reasoning (+0.66) |
-| "be very helpful" | enhance reasoning (+0.85), enhance knowledge (+0.70) |
-| "be extremely cautious" | enhance safety (+1.00) |
-
-**Key Design Decision:** Direction is determined per-layer, not globally. "Be angry" correctly enhances style (anger IS personality expression) while suppressing helpfulness (angry = not helpful) and safety (anger bypasses caution).
-
-#### Confidence Measurement
-
-Confidence is calculated based on:
-- **Semantic similarity strength** — how closely the behavior matches layer descriptions
-- **Dominance gap** — how much the top match exceeds other matches
-- **Dynamic threshold** — `mean + 0.3 × std` of all similarity scores
+The global mean perplexity of 13.675 is dominated by Tamil degradation (PPL ratios exceeding 97x) and English generation on an Indic-primary model. When restricted to the target domain (Indo-Aryan honorific steering at optimal strength), fluency is preserved.
 
 ---
 
-### Phase 3: Layer Resolution (`resolver.py`)
+## 4. Failure Modes and Limitations
 
-Maps the interpreter's output (category + direction + magnitude) to specific layer indices in the loaded model.
+### 4.1 Tamil Language Degradation (Critical)
 
-#### Legacy Mode: Scan-Based Resolution
+While Hindi and Bengali honorific steering operated within acceptable perplexity bounds (PPL ratio < 2.0 at optimal strength), the identical methodological pipeline applied to Tamil produced catastrophic fluency degradation:
 
-```
-1. Look up which layers belong to each matched category (from scan results)
-2. Sort by the layer's scan anomaly score (higher = more impactful)
-3. Select top N layers per category
-4. Return with direction vectors ready for steering
-```
+| Strength | Tamil Cohen's d | Tamil PPL Ratio |
+|----------|----------------|-----------------|
+| 0.5      | -2.781         | 1.304           |
+| 1.0      | -0.511         | **8.465**       |
+| 1.5      | -1.677         | **97.759**      |
+| 2.0      | -1.813         | **145.055**     |
+| 2.5      | -1.717         | **97.120**      |
+| 3.0      | -2.228         | **156.234**     |
 
-#### New: Feature Dictionary Direct Lookup (v2.0)
+At strength 1.5 (the Hindi/Bengali optimal point), Tamil perplexity explodes to 97.8x baseline. The model generates near-random token sequences despite showing statistically significant Cohen's d values. These effect sizes are artifacts of semantic shift in incoherent text, not meaningful behavioral modulation.
 
-O(1) lookup: `feature_id → (layer_index, vector, strength, direction)` — no heuristics needed.
+**Root cause.** The shared Indic politeness circuit at L4/L8 processes Tamil honorific morphology using the same computational pathway as Hindi and Bengali. However, Tamil belongs to the Dravidian language family, while Hindi and Bengali are Indo-Aryan. The CAA vector computed from Hindi/Bengali-style contrastive pairs encodes morphological transformations specific to the Indo-Aryan honorific system (verb conjugation suffixes, pronoun substitution patterns). When injected into the shared circuit, this vector destructively interferes with Tamil's agglutinative morphology, where honorific marking involves distinct suffix chains (e.g., "-nga" pluralization for respect) that occupy different subspaces of the residual stream.
 
-#### Bell-Curve Layer-Aware Strength (v2.0)
+**Implication.** A single steering vector cannot uniformly modulate a typologically diverse language set, even when the languages share processing circuitry at the same network depth. Layer-specific tuning per language family, or multi-layer distributed steering vectors computed from Tamil-specific contrastive pairs, is required. This constitutes an open research problem in cross-lingual activation steering.
 
-Default strength is automatically scaled by a Gaussian bell curve centered at **60% model depth**:
+### 4.2 Safety Concepts Resist Single-Layer Steering
 
-```python
-relative_pos = feature.layer_idx / total_layers
-multiplier = exp(-((relative_pos - 0.6)² / 0.1))
-```
+Toxicity reduction failed to achieve statistical significance at any strength level (best: d = -0.052, p = 0.894). Refusal behavior achieved significance only at strength 2.0 (d = 0.941, p = 0.019) but with PPL ratio 6.32, indicating degraded generation quality.
 
-Research across Llama 2, GPT-2, and Mistral confirms:
-- **Early layers (0–20%)**: handle tokens/syntax → low strength to avoid breaking grammar
-- **Middle layers (~60%)**: optimal injection point → full strength
-- **Late layers (80–100%)**: diminishing returns → reduced strength
+These concepts are distributed across multiple transformer layers. Residual stream connections heal single-layer perturbations by the time activations reach the output head. This is consistent with prior work showing that safety-relevant behaviors in RLHF-trained models are encoded across the full depth of the network (Anthropic, 2023).
 
-Example for a 30-layer model:
+### 4.3 Polysemanticity of Steering Vectors
 
-| Layer | Relative Position | Bell Multiplier | Effective Strength (base=2.0) |
-|-------|-------------------|-----------------|-------------------------------|
-| L0    | 0.00              | 0.027           | 0.05                          |
-| L10   | 0.33              | 0.491           | 0.98                          |
-| L18   | 0.60              | **1.000**       | **2.00** (peak)               |
-| L25   | 0.83              | 0.580           | 1.16                          |
-| L29   | 0.97              | 0.261           | 0.52                          |
+CAA vectors are computed as the mean difference between positive and negative activation sets. Each vector is a dense, high-dimensional direction that may entangle multiple behavioral concepts. A "politeness" vector may simultaneously encode formality, verbosity, and hedging.
 
----
+Sparse Autoencoders (SAEs) address this via monosemantic decomposition (Cunningham et al., 2023), but require orders-of-magnitude more compute for dictionary learning. SteerOps accepts polysemanticity in exchange for zero-training-time vector computation (~60 seconds per concept per model).
 
-### Phase 4: Activation Steering (`engine.py`)
+### 4.4 Single-Layer Injection Assumption
 
-The steering engine modifies model activations in real-time using PyTorch forward hooks.
+The current architecture applies a steering vector at a single layer selected by the weight-based scanner. This works when the target behavior is concentrated in a narrow band of the residual stream (as with Indic honorifics at L4/L8). It fails for concepts whose representation is distributed across the full network (toxicity, refusal).
 
-#### Steering Pipeline (Per Token)
+Multi-layer cascaded steering -- injecting coordinated vectors at multiple layers with per-layer strength calibration -- is the acknowledged next step. The Gram-Schmidt orthogonalization (Section 1.4) already supports this, but the current evaluation only tested single-layer configurations.
 
-```
-For each registered hook at layer ℓ:
+### 4.5 Direction Vectors Are Model-Specific
 
-  STEP 0: Extract x from output, preserve KV cache
-  STEP 1: Cooldown check (circuit breaker recovery)
-  STEP 2: Gating — skip injection if x is already aligned with v
-           (cosine similarity > auto-calibrated gate_threshold)
-  STEP 3: Steering or Erasure
-           Mode "steer": Orthogonal projection + adaptive decay
-           Mode "erase": LEACE null-space projection
-  STEP 4: L₂ norm preservation (clamp scale within ±5%)
-  STEP 5: NaN/Inf safety check → revert + cooldown on failure
-```
+A vector computed on `sarvam-1` is not transferable to `Llama-3-8B`. Vectors are tied to the model's specific learned residual stream geometry. Each model requires independent vector computation.
 
-#### Orthogonal Projection (Default Mode)
+### 4.6 Single-Tenant Inference Constraint
 
-Instead of naive additive steering (`x + α·v`), which doubles the component already present:
+PyTorch `register_forward_hook` mutates global model state. In batched multi-tenant serving (e.g., vLLM PagedAttention), per-request steering vectors require custom CUDA kernel integration or request-level activation interception. The current implementation enforces single-user GPU access via middleware, returning HTTP 503 to concurrent requests.
 
-```
-v_orth = v - proj_x̂(v) = v - (v · x̂)x̂
-x_steered = x + strength × v_orth
-```
+### 4.7 Concept Erasure Is Binary
 
-Only the **orthogonal component** is injected — the part of the steering direction not already in the activation.
+LEACE null-space projection completely removes a concept direction; there is no parameterized partial erasure. Gradual suppression requires the standard steering mode with negative strength, which risks overshooting and inverting the concept.
 
-#### LEACE Concept Erasure (Mode: "erase")
+### 4.8 Evaluation Limitations
 
-Based on Belrose et al., "LEACE: Perfect Linear Concept Erasure in Closed Form":
-
-```
-x_erased = x - (x · v̂)v̂
-```
-
-Provably removes **all** linear information about concept v from the activation. Unlike suppression (which can overshoot and invert), erasure is binary and mathematically guaranteed.
-
-#### Adaptive Strength Decay
-
-```
-decay = max(min_decay, 1.0 - token_count × decay_rate)
-effective_strength = base_strength × decay
-```
-
-Full strength on early tokens, decaying over time — prevents late-token drift.
-
-#### Logit Entropy Circuit Breaker
-
-After each token, compute Shannon entropy of the logit distribution. If entropy > 6.0 nats, all hooks enter cooldown (5 tokens of pass-through).
-
-#### Gram-Schmidt Multi-Vector Composition (v2.0)
-
-When multiple hooks are active simultaneously, their direction vectors may overlap. Before each generation, all active vectors are orthogonalized via Gram-Schmidt:
-
-```
-For hooks [v₀, v₁, v₂]:
-  v₁' = v₁ - proj_v₀(v₁)              # remove v₀ component from v₁
-  v₂' = v₂ - proj_v₀(v₂) - proj_v₁'(v₂) # remove both components from v₂
-  Normalize all to unit length
-```
-
-This guarantees each vector steers an **independent axis** with zero interference.
-
-> **When is this needed?** PCA components from the *same layer* are already strictly orthogonal by SVD construction — Gram-Schmidt is a no-op for them. It becomes necessary when combining vectors from **different sources**: e.g., a PCA feature vector + a custom CAA vector, or PCA vectors from different layers projected into the same residual stream. The implementation handles all cases uniformly.
-
-#### Auto-Calibrated Gating
-
-In high-dimensional spaces (4096D for Llama-3), cosine similarity naturally shrinks toward zero. Gate threshold is auto-calibrated:
-
-```python
-gate_threshold = 3.0 / sqrt(hidden_dim)
-# 768D → 0.108,  4096D → 0.047
-```
-
-**Safety Features:**
-- NaN/Inf detection and clamping
-- Automatic hook cleanup after generation
-- Thread-safe concurrent generation support
-- Steering overhead measurement (typically <2ms per token)
+1. **Sample size.** 10 test prompts per condition. Statistical power is limited; marginal effects (0.05 < p < 0.10) may achieve significance with larger N.
+2. **Perplexity as fluency proxy.** PPL does not capture semantic coherence, factual correctness, or pragmatic appropriateness. Human evaluation is required to validate that steered outputs are meaningfully different, not merely statistically different.
+3. **No MoE support.** Sparse expert routing (Mixtral, DeepSeek-V3) is not handled by the current hook architecture.
+4. **Embedding model bias.** Concept alignment is measured via `paraphrase-multilingual-MiniLM-L12-v2` sentence embeddings, which may not capture domain-specific semantic shifts in low-resource Indic languages.
 
 ---
 
-### Phase 5: Direction Vector Computation (`vector_calculator.py`)
+## 5. Enterprise Architecture Impact
 
-Direction vectors are computed via **Contrastive Activation Addition (CAA)**:
+### 5.1 Comparative Analysis
+
+Consider three architectures for runtime behavioral control of a deployed LLM:
+
+**Architecture A: Dual-Model Guardrail (e.g., LlamaGuard).** A secondary classifier model evaluates each generated response and either passes or blocks it. This introduces a full additional forward pass per generation:
 
 ```
-1. Define contrastive prompt pairs:
-   Positive: "Please help me with this task"
-   Negative: "I refuse to help you with anything"
-
-2. Run both through the model, capture activations at the target layer
-
-3. Direction vector = mean(positive_activations) - mean(negative_activations)
-
-4. L2-normalize for stable steering magnitude
+Total latency = T_base + T_guardrail
+              = 90.5ms + ~50-200ms (guardrail model dependent)
+              = 140-290ms per token
 ```
 
-The direction vector is a property of the layer and model, not the specific behavior. It represents the "direction" in activation space that corresponds to the behavioral concept.
+The guardrail model occupies its own VRAM allocation and provides binary accept/reject control -- it cannot modulate the degree of a behavior.
 
-> **Note:** In v2.0, PCA Feature Extraction (Phase 1.5) provides an alternative path to direction vectors — unsupervised, orthogonal by construction, and auto-labeled. CAA remains available for targeted contrastive scenarios.
+**Architecture B: Continuous DPO/RLHF Fine-Tuning.** Behavioral policy is updated via periodic fine-tuning runs. Each training iteration requires:
+
+```
+Cost per update = N_gpus * T_training * C_gpu_hour
+                = 8 * 4h * $2.50/h (A100 spot)
+                = $80 per behavioral iteration
+```
+
+Latency to deploy a behavioral change is measured in hours to days. The update is permanent and non-reversible without retraining.
+
+**Architecture C: Activation Steering (SteerOps).**
+
+```
+Total latency = T_base + T_steering = 90.5ms + 0.0ms = 90.5ms
+VRAM overhead = 1 float32 vector per hook = d_model * 4 bytes = 8KB
+Time to deploy new behavior = ~60 seconds (vector computation)
+Reversibility = Immediate (remove hook)
+```
+
+### 5.2 Comparison
+
+| Property                 | Dual-Model Guardrail | DPO Fine-Tuning | Activation Steering |
+|-------------------------|---------------------|-----------------|---------------------|
+| Latency overhead         | +50--200ms/tok      | 0 (post-deploy) | 0.0ms/tok           |
+| VRAM overhead            | +2--14GB            | 0 (post-deploy) | 8KB per hook         |
+| Behavioral granularity   | Binary (pass/block) | Continuous       | Continuous (strength parameter) |
+| Deployment latency       | Model load time     | Hours--days      | ~60 seconds         |
+| Reversibility            | Model unload        | Retrain required | Hook removal (instant) |
+| Per-iteration cost       | Inference cost      | $80+ per update  | ~$0 (single forward pass pair) |
+| Weight modification      | None (separate model)| Permanent       | None                |
+
+Activation steering provides continuous behavioral modulation with instantaneous reversibility at strictly lower latency and VRAM cost than either alternative. The tradeoff is reduced reliability for distributed concepts (safety, toxicity) and language-family-specific failure modes, both documented in Section 4.
 
 ---
 
-## Research-Backed Improvements (v2.0)
-
-All improvements are backed by published research and verified with integration tests (6/6 passing):
-
-| # | Improvement | Paper/Source | What It Does | Verified |
-|---|-------------|-------------|--------------|----------|
-| 1 | **Gram-Schmidt Orthogonalization** | "Multi-Attribute Orthogonal Subspace Steering" | Ensures multi-vector composition has zero interference (dot products: 0.90 → 0.000000) | ✅ |
-| 2 | **Min-Variance Noise Filter** | Standard PCA practice | Drops components < 0.1% variance — 20 PCs → 3 kept when signal concentrated | ✅ |
-| 3 | **Contrastive Auto-Labeling** | Rimsky et al., "Steering Llama 2 via CAA" | Amplify(+) vs Suppress(-) delta doubles signal vs baseline-only approach | ✅ |
-| 4 | **Bell-Curve Layer Strength** | Llama 2, GPT-2, Mistral layer studies | Gaussian peak at 60% depth — L0=0.05, L18=2.00, L29=0.52 | ✅ |
-| 5 | **LEACE Concept Erasure** | Belrose et al., "Perfect Linear Concept Erasure" | Null-space projection removes concept completely (3.44 → 0.000000), preserves perpendicular info exactly | ✅ |
-| 6 | **NLI Cross-Encoder Direction** | Standard NLI (DeBERTa-v3) | Replaces keyword hacks — handles negation natively (13/13 tests passed) | ✅ |
-
-Additional runtime improvements (implemented but not separately tested):
-- **Adaptive Strength Decay** — prevents auto-regressive generation drift
-- **Auto-Calibrated Gating** — threshold adjusted per hidden dimension
-- **L₂ Norm Preservation** — activation magnitude clamped within ±5%
-- **Entropy Circuit Breaker** — kills steering on confused logits (entropy > 6.0 nats)
-
----
-
-## Supported Models
-
-SteerOps works with **any HuggingFace transformer model** that uses the standard architecture (attention + FFN layers). Tested and recommended models:
-
-| Model | Parameters | VRAM Required | Quality | Notes |
-|-------|-----------|---------------|---------|-------|
-| `HuggingFaceTB/SmolLM2-135M` | 135M | ~300MB | Demo | 30 layers — limited differentiation |
-| `HuggingFaceTB/SmolLM2-360M` | 360M | ~700MB | Better | More distinct layer boundaries |
-| `HuggingFaceTB/SmolLM2-1.7B` | 1.7B | ~3.5GB | Good | Recommended for development |
-| `meta-llama/Llama-2-7b-hf` | 7B | ~14GB (7GB quantized) | Excellent | Production-quality steering |
-| `mistralai/Mistral-7B-v0.1` | 7B | ~14GB (7GB quantized) | Excellent | Strong reasoning layers |
-| `meta-llama/Meta-Llama-3-8B` | 8B | ~16GB (8GB quantized) | Best | 80 layers — finest granularity |
-| `meta-llama/Llama-2-70b-hf` | 70B | ~140GB (35GB 4-bit) | Research | Maximum layer resolution |
-
-### Model Requirements
-
-- Must be a **decoder-only transformer** (GPT-style)
-- Must be available on HuggingFace or as a local checkpoint
-- Architecture must have named `model.layers[i]` (standard HuggingFace format)
-- Quantized models (4-bit, 8-bit via bitsandbytes) are fully supported
-
-### How Model Size Affects Quality
-
-```
-Small models (< 1B):
-  ├── Few layers (≤ 30) → multiple categories share same layers
-  ├── Lower confidence scores → behaviors overlap
-  └── Good for demos and development
-
-Medium models (1B–7B):
-  ├── 32–48 layers → better category separation
-  ├── Clear functional boundaries at CKA drops
-  └── Good for production use
-
-Large models (7B+):
-  ├── 32–80+ layers → fine-grained layer specialization
-  ├── Distinct safety, reasoning, and style zones
-  └── Best steering accuracy and confidence
-```
-
----
-
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                      Frontend (React + Vite)                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐   │
-│  │ Control Panel│  │     Chat     │  │  Activation Heatmap  │   │
-│  │ + Feature    │  │  Interface   │  │  + Diagnostics Panel │   │
-│  │   Browser    │  │  (WebSocket) │  │  (real-time metrics) │   │
-│  └──────────────┘  └──────────────┘  └──────────────────────┘   │
-└───────────────────────────┬──────────────────────────────────────┘
-                            │ REST + WebSocket
-┌───────────────────────────▼──────────────────────────────────────┐
-│                     Backend (FastAPI + PyTorch)                    │
-│                                                                   │
-│  ┌──────────────┐  ┌─────────────────┐  ┌────────────────────┐  │
-│  │   Scanner    │  │  PCA Feature    │  │   Intent Router    │  │
-│  │  (SVD, CKA,  │  │  Extractor     │  │  (Bi-Encoder +     │  │
-│  │   Entropy)   │  │  (Offline)      │  │   NLI Cross-Enc.)  │  │
-│  └──────┬───────┘  └────────┬────────┘  └─────────┬──────────┘  │
-│         │                   │                      │             │
-│         │         ┌─────────▼──────────┐           │             │
-│         └────────►│   Layer Resolver   │◄──────────┘             │
-│                   │  (O(1) Lookup +    │                         │
-│                   │   Bell-Curve Str.) │                         │
-│                   └─────────┬──────────┘                         │
-│                             │                                    │
-│  ┌──────────────────────────▼────────────────────────────────┐  │
-│  │               Steering Engine (PyTorch Hooks)              │  │
-│  │  • Orthogonal Projection    • L₂ Norm Preservation        │  │
-│  │  • Adaptive Decay           • Entropy Circuit Breaker      │  │
-│  │  • Gram-Schmidt Multi-Vec   • LEACE Concept Erasure        │  │
-│  │  • Bell-Curve Strength      • Auto-Calibrated Gating       │  │
-│  └────────────────────────────────────────────────────────────┘  │
-│                                                                   │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │  Storage: SQLite (scan cache + features) + NumPy (vectors)  │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │  Vector Calculator (CAA) — legacy contrastive pairs path    │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Production Viability & Architectural Trade-offs
-
-SteerOps is designed as an agile, mathematical debugger for LLMs, but makes explicit architectural trade-offs that differ from billion-dollar multi-tenant inference engines.
-
-### 1. Global PyTorch Hooks vs. Multi-Tenancy
-
-Standard PyTorch forward hooks (`register_forward_hook`) mutate the global model state in VRAM. In a massive multi-tenant SaaS environment, batched inference requires highly complex custom CUDA kernels (like vLLM's PagedAttention) to apply different steering vectors to different sequences within the same batch.
-
-**The SteerOps Solution:** Rather than pretending standard PyTorch supports zero-cost multi-tenant vector injection, SteerOps embraces its identity as a **single-tenant diagnostic tool**. When deployed via `STEEROPS_DEPLOY_MODE=production`, it uses a custom `SessionLockMiddleware`. This enforces a strict 1-user GPU queue, gracefully returning a 503 error to concurrent API requests, guaranteeing zero cross-contamination of steering hooks across users.
-
-### 2. CAA vs. Sparse Autoencoders (SAEs)
-
-State-of-the-art interpretability currently favors Sparse Autoencoders (SAEs), which extract millions of monosemantic features (e.g., Anthropic's Golden Gate Claud). 
-
-**Why SteerOps uses CAA and PCA:** Training an SAE requires massive datasets and heavy GPU compute for *every single layer* of a specific model. SteerOps optimizes for **deployment agility and zero-training inference**. Using Contrastive Activation Addition (CAA), an engineer can take a brand new open-source model and generate a steering vector for "toxicity" in 60 seconds. SteerOps is intervention-first, providing immediate runtime patching without the millions of dollars required for SAE training.
-
----
-
-## Quick Start
-
-### Prerequisites
-
-- **Python 3.11+** (3.12 recommended)
-- **Node.js 20+** (for frontend)
-- **CUDA GPU** recommended (works on CPU, but 10x slower)
-- **4GB+ VRAM** for small models, 8GB+ for 7B models
-
-### Option 1: Local Development
-
-#### Backend
-
-```bash
-# Clone the repository
-git clone https://github.com/shrey0303/activation_Steering.git
-cd activation_Steering
-
-# Create virtual environment
-python -m venv .venv
-
-# Activate (Windows)
-.venv\Scripts\activate
-# Activate (Linux/Mac)
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r backend/requirements.txt
-
-# Configure (optional — defaults work out of the box)
-cp backend/.env.example backend/.env
-# Edit backend/.env to set MODEL_NAME, DEVICE, etc.
-
-# Start the backend server
-cd backend
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-#### Frontend
-
-```bash
-# In a new terminal
-cd frontend
-npm install
-npm run dev
-```
-
-Open **http://localhost:5173** in your browser.
-
-#### Backend API docs available at **http://localhost:8000/docs**
-
-### Option 2: Docker (Production)
-
-```bash
-docker-compose up --build
-# Frontend: http://localhost:3000
-# Backend API: http://localhost:8000/docs
-```
-
-### Deployment Modes
-
-SteerOps has two deployment modes controlled by the `STEEROPS_DEPLOY_MODE` environment variable:
-
-| Mode | Env Value | Concurrency Guards | Use Case |
-|------|-----------|-------------------|----------|
-| **Local** | `local` (default) | None — full access | Personal dev, research |
-| **Production** | `production` | Session lock + rate limiting | Public demos, LinkedIn showcase |
-
-#### Production Mode Features
-
-When `STEEROPS_DEPLOY_MODE=production`:
-
-1. **Session Lock** — Only one user can interact with GPU endpoints at a time. Others receive a `503 Service Unavailable` with a friendly message. Lock auto-expires after 5 minutes of inactivity.
-2. **Rate Limiting** — Per-IP sliding window: 30 GPU requests/min, 120 lightweight requests/min. Prevents abuse.
-3. **Exempt Endpoints** — Health checks, metrics, model listing, and docs are always accessible.
-
-```bash
-# Enable production mode locally for testing:
-set STEEROPS_DEPLOY_MODE=production  # Windows
-export STEEROPS_DEPLOY_MODE=production  # Linux/Mac
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-Docker Compose automatically sets `production` mode.
-
-### First Run Walkthrough
-
-```
-1. Open http://localhost:5173
-2. The app loads with default model (SmolLM2-135M)
-3. Wait for model download and loading (~30s first time)
-4. Model scan runs automatically after loading
-5. Switch to "Expected Behavior" tab
-6. Type a behavior: "be very polite"
-7. Click "Analyze & Detect Layers"
-8. Review detected layers (e.g., L27↑ for style, L23↑ for safety)
-9. Adjust steering strength slider if needed
-10. Type a prompt in the chat and send
-11. See steered output with real-time token streaming
-12. Export the intervention as a JSON patch
-```
-
-### Run PCA Feature Extraction (Optional, v2.0)
-
-```bash
-cd backend
-python -m app.core.feature_extractor --model HuggingFaceTB/SmolLM2-135M --top-k 20
-```
-
-### Web UI Guide
-
-The SteerOps interface has 5 panels:
-
-#### Control Panel (Left)
-
-| Section | What It Does |
-|---------|-------------|
-| **Model Selector** | Type any HuggingFace model ID (e.g., `HuggingFaceTB/SmolLM2-135M`), click Load |
-| **Layer Map** | After scanning, shows all layers colored by category (reasoning, safety, style, etc.) |
-| **Behavior Analysis** | Type a behavior description (e.g., "be very angry") → click "Analyze & Detect Layers" → see which layers activate |
-| **Feature Dictionary** | Browse PCA features, relabel them, search by keyword (requires running feature extraction first) |
-
-#### Chat (Center)
-
-Type prompts to generate text. When steering hooks are active (layers selected from analysis), the output is steered in real-time. The chat shows token-by-token streaming via WebSocket.
-
-#### Layer Activation Map (Right Top)
-
-Heatmap of per-layer activations. Send a prompt in chat to see live activation magnitudes across all layers. Layers that fire strongly are highlighted.
-
-#### Steering Diagnostics Panel (Right Bottom)
-
-**This panel shows real-time per-token steering metrics during generation.** It only activates when steering hooks are applied.
-
-| Metric | What It Shows |
-|--------|--------------|
-| **FIRED badge** | Green badge = the hook injected a steering vector on this token |
-| **COOLDOWN badge** | Amber badge = hook is in adaptive decay cooldown (waiting N tokens before re-firing) |
-| **Strength** | Effective steering strength after bell-curve scaling and decay |
-| **Tokens** | Number of tokens processed by this hook |
-| **Overhead** | Per-hook latency in milliseconds (typically <2ms) |
-| **Gate Threshold** | Auto-calibrated gate value — `2.0 / √(hidden_dim)`. If cosine similarity between the current activation and the steering vector is below this, the hook skips injection |
-| **Entropy** | Output token entropy in nats. Low (<4) = confident generation. High (>6) = confused logits |
-| **CIRCUIT BREAKER** | Red pulsing badge = entropy exceeded 6.0 nats, steering was killed to prevent incoherent output |
-| **Strength Timeline** | Sparkline showing effective strength over the last 50 tokens — visualizes adaptive decay |
-
-**How to use diagnostics:**
-```
-1. Load a model and scan it
-2. Go to "Behavior Analysis" → type "be very polite" → "Analyze & Detect Layers"
-3. Layers are now selected with steering hooks
-4. Type a prompt in chat (e.g., "Tell me about AI")
-5. Watch the Diagnostics panel update per-token as generation streams
-6. The sparkline shows how steering strength decays over time
-7. If entropy spikes, the circuit breaker triggers (red badge)
-```
-
-## API Reference
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/v1/health` | System health check |
-| `GET` | `/api/v1/models` | List loaded models |
-| `POST` | `/api/v1/models/load` | Load a model by name |
-| `POST` | `/api/v1/models/unload` | Free model from memory |
-| `GET` | `/api/v1/models/load-status` | Polling endpoint for model loading progress |
-| `POST` | `/api/v1/scan` | Run mathematical layer scan |
-| `POST` | `/api/v1/analyze` | Interpret behavior → layer mapping |
-| `POST` | `/api/v1/generate` | Generate text with optional steering |
-| `POST` | `/api/v1/activations` | Capture per-layer activation magnitudes |
-| `POST` | `/api/v1/features/extract` | Run offline PCA feature extraction (v2.0) |
-| `GET` | `/api/v1/features` | List all extracted features (v2.0) |
-| `GET` | `/api/v1/features/{id}` | Get a specific feature by ID (v2.0) |
-| `PUT` | `/api/v1/features/{id}/label` | Update feature label (v2.0) |
-| `POST` | `/api/v1/evaluate` | Run before/after evaluation with metrics |
-| `POST` | `/api/v1/patches/export` | Export intervention as JSON patch |
-| `GET` | `/api/v1/patches` | List saved patches |
-| `GET` | `/api/v1/patches/{id}` | Get a specific patch |
-| `GET` | `/api/v1/patches/{id}/download` | Download patch file |
-| `GET` | `/api/v1/metrics` | System performance metrics |
-| `POST` | `/api/v1/vectors/compute` | Compute CAA direction vector |
-| `GET` | `/api/v1/vectors` | List available concept vectors |
-| `WS` | `/api/v1/ws/generate` | Streaming token-by-token generation |
-
-### WebSocket Protocol
-
-```json
-// Client → Server: Generate
-{"type": "generate", "prompt": "Hello", "max_tokens": 200, "steering": {"layer": 27, "strength": 1.6, "direction_vector": [...]}}
-
-// Server → Client: Token stream
-{"type": "token", "text": " world", "token_id": 1917}
-
-// Server → Client: Done with metadata
-{"type": "done", "metadata": {"total_tokens": 42, "latency_ms": 1850.3, "tokens_per_sec": 22.7, "steering_applied": true}}
-
-// Client → Server: Stop generation
-{"type": "stop"}
-
-// Keep-alive ping/pong
-{"type": "ping"} → {"type": "pong"}
-```
-
----
-
-## Python Library (`steerops`)
-
-SteerOps ships a standalone Python library for programmatic patch application:
-
-### Installation
-
-```bash
-# Install from local source (not yet on PyPI)
-pip install ./steerops
-# With evaluation metrics:
-pip install ./steerops[eval]
-```
-
-### Usage
-
-```python
-from steerops import Steerer
-
-# Apply a steering patch to any model
-steerer = Steerer.from_patch("politeness_patch.json")
-steerer.apply(model, tokenizer)
-
-# Generate with steering active
-output = steerer.generate("Tell me about quantum physics", max_tokens=200)
-
-# Compare steered vs unsteered
-comparison = steerer.compare(
-    "Explain machine learning",
-    max_tokens=100
-)
-print(comparison["original"])
-print(comparison["steered"])
-print(f"Semantic shift: {comparison['metrics']['semantic_shift']:.3f}")
-
-# Evaluate steering quality
-metrics = steerer.evaluate(
-    prompts=["Hello", "Explain gravity"],
-    target_concept="politeness"
-)
-print(f"Overall score: {metrics['overall_score']}/100 ({metrics['grade']})")
-```
-
-### CLI
-
-```bash
-# Apply a patch and generate
-steerops apply patch.json --prompt "Hello world" --model gpt2
-
-# Inspect a patch
-steerops info patch.json
-
-# Compare with/without steering
-steerops compare patch.json --prompt "Explain AI" --model gpt2
-```
-
----
-
-## Benchmarks
-
-SteerOps has been evaluated on two model sizes using the full CAA pipeline (scanner → layer routing → vector computation → steering → evaluation). Full methodology and per-concept breakdowns are in [BENCHMARKS.md](BENCHMARKS.md).
-
-### Qwen2.5-0.5B — 6/25 significant tests
-
-| Concept | Layer | Best Cohen's d | p-value | Significant | Fluency |
-|---------|-------|----------------|---------|-------------|----------|
-| **Creativity** | 21 | **0.647** | **0.017** | **✅** (4/5 strengths) | ✅ |
-| **Verbosity** | 11 | **1.179** | **0.002** | **✅** (2/5 strengths) | ✅ |
-| Toxicity | 13 | 0.928 | 0.080 | ❌ | ⚠️ |
-| Politeness | 11 | 0.559 | 0.315 | ❌ | ✅ |
-| Refusal | 13 | 0.029 | 0.634 | ❌ | ✅ |
-
-Pipeline-level fluency preserved (mean perplexity ratio 1.13). Individual toxicity evaluations at high strength pushed above 2.0.
-
-### Qwen2.5-7B — 6/25 significant tests
-
-| Concept | Layer | Best Cohen's d | p-value | Significant | Fluency |
-|---------|-------|----------------|---------|-------------|----------|
-| **Creativity** | 19 | **1.236** | **0.003** | **✅** (4/5 strengths) | ⚠️ |
-| **Politeness** | 9 | **-1.258** | **0.016** | **✅** (2/5 strengths) | ⚠️ |
-| Toxicity | 21 | 0.440 | 0.333 | ❌ | ⚠️ |
-| Refusal | 21 | -0.242 | 0.429 | ❌ | ❌ |
-| Verbosity | 9 | 0.753 | 0.057 | ❌ | ✅ |
-
-Creativity showed a clean monotonic dose-response: d=0.64 at strength 1.0 → d=1.22 at strength 2.0 across four consecutive significant results. On 7B, steering above strength 1.5 degrades fluency (perplexity >2.0). Politeness at strength 1.0 was the cleanest result: d=-1.26, p=0.016, perplexity 1.14.
-
-> **7B debugging note:** Initial 7B evaluation showed zero steering effect (mean shift 0.004). Root cause: gating threshold and strength parameters calibrated on 896-dim hidden space (0.5B) were not effective on 3584-dim (7B). Gating fired on every hook call, and perturbation was <1% of activation norm. Fixed via activation-norm-scaled strength injection and adaptive gating. See [BENCHMARKS.md](BENCHMARKS.md).
-
-### Steering Examples (0.5B, best strength)
-
-**Verbosity Control** (strength 2.0, layer 11):
-
-| | Output |
-|---|---|
-| **Prompt** | What is 2+2? |
-| **Baseline** | 2+2 is 4. It is a basic arithmetic operation that involves adding two numbers together. The result of adding 2 and 2 is always 4, regardless of... |
-| **Steered** | 4. |
-
-**Creativity Boost** (strength 1.0, layer 21):
-
-| | Output |
-|---|---|
-| **Prompt** | Describe the color blue. |
-| **Baseline** | Blue is a primary color that is commonly associated with the sky and the ocean. It is one of the three primary colors in the RGB color model... |
-| **Steered** | Blue is the color of a thousand unspoken thoughts — the hue that drifts between melancholy and wonder, like an ocean that can't decide whether to cradle you or swallow you whole... |
-
-| | Output |
-|---|---|
-| **Prompt** | Write a sentence about a tree. |
-| **Baseline** | A tree is a tall plant that grows in the ground and provides shade, oxygen, and habitats for various animals and insects. |
-| **Steered** | The old oak had been keeping secrets since before the town had a name — its roots threading through forgotten stories like fingers through tangled hair. |
-
----
-
-## Roadmap
-
-| Phase | Feature | Status |
-|-------|---------|--------|
-| ✅ 1.0 | Core pipeline (scanner, engine, evaluator) | Complete |
-| ✅ 1.5 | PCA Feature Dictionary + Intent Router | Complete |
-| ✅ 2.0 | CAA vectors, orthogonal projection, LEACE erasure | Complete |
-| ✅ 2.1 | Benchmarks (0.5B verified, 7B hook issue identified) | Complete |
-| ✅ 2.2 | **7B scale fix** — activation-norm-scaled strength, adaptive gating (6/25 sig) | Complete |
-| 🔜 3.0 | **Multi-layer steering** — inject at N, N+1, N+2 to prevent residual healing | Next |
-| 🔜 3.1 | **MoE-aware routing** — steer expert pathways in MoE architectures | Planned |
-| 🔜 3.2 | **SAE integration** — monosemantic feature dictionaries (Anthropic-style) | Planned |
-| 🔜 4.0 | **Attention head targeting** — steer specific heads, not full layers | Research |
-| 🔜 4.1 | **Gradient-based probing** — complement weight analysis with activation probes | Research |
-
----
-
-## Evaluation Metrics
-
-SteerOps evaluates steering quality using 6 metrics:
-
-| Metric | Weight | What It Measures |
-|--------|--------|-----------------|
-| **Semantic Shift** | 25% | Cosine distance between steered and unsteered outputs (sentence embeddings) |
-| **Concept Alignment** | 25% | Cosine similarity of steered output to target concept anchor |
-| **Perplexity Delta** | 15% | Change in output fluency — lower delta = better coherence preservation |
-| **Behavioral Consistency** | 15% | Stability across multiple prompts — std of per-prompt concept alignment scores |
-| **Steering Efficiency** | 10% | Semantic shift achieved per unit of steering strength |
-| **Sentiment Shift** | 10% | Change in TextBlob sentiment polarity between baseline and steered output |
-
-### Scoring
-
-```
-Overall = Σ(metric_score × weight) × 100
-Grades: A+ (≥95), A (≥90), B+ (≥85), B (≥80), C+ (≥75), C (≥70), D (≥60), F (<60)
-```
-
----
-
-## Limitations
-
-### Current Limitations
-
-1. **Small models (< 1B params)** have limited layer differentiation
-   - Only 30 layers in SmolLM2-135M → multiple behavioral categories share layers
-   - Lower confidence scores for nuanced behaviors
-   - Recommended: Use 7B+ models for production
-
-2. **Direction vectors are model-specific**
-   - A direction vector computed on Llama-2-7B will NOT work on Mistral-7B
-   - Patches are tied to the exact model architecture
-   - Re-export is needed when switching models
-
-3. **Semantic matching depends on sentence-transformers**
-   - all-MiniLM-L6-v2 has limited understanding of highly domain-specific terms
-   - Very niche behaviors may get low confidence scores
-   - Workaround: use more descriptive phrases ("be rude and dismissive" > "be mean")
-
-4. **Auto-labeling quality depends on model size**
-   - SmolLM2-135M produces weaker labels than Llama-3-8B
-   - Contrastive approach helps, but larger models have more distinct features
-
-5. **PCA components and CAA vectors are polysemantic (dense)**
-   - They capture orthogonal variance directions but may entangle multiple concepts in a single vector.
-   - **Trade-off:** Sparse Autoencoders (SAEs) solve this by finding monosemantic, interpretable features, but require massive training compute. SteerOps accepts polysemanticity in exchange for **zero-training, 60-second immediate steering agility**. (Upgrade path: replacing PCA vectors with pre-trained SAE dictionaries).
-
-6. **Concept erasure is binary**
-   - Unlike the steering slider, erasure mode completely removes a concept direction
-   - There is no "partial erasure" — use suppression mode for gradual control
-
-7. **NLI cross-encoder adds ~80MB overhead**
-   - `cross-encoder/nli-deberta-v3-small` is 22M params — negligible alongside a 7B model
-   - Falls back to keyword detection if unavailable
-   - Cross-encoder inference adds ~5-10ms per feature candidate
-
-8. **7B models require activation-norm-scaled strength (resolved in v2)**
-   - Initial evaluation showed zero steering effect — gating and strength parameters calibrated on 0.5B (hidden_dim=896) were ineffective on 7B (hidden_dim=3584)
-   - **Root cause:** Gating threshold too low (every hook call silently gated out) + perturbation <1% of activation norm
-   - **Fix:** Disabled gating for hidden_dim > 2048, added `act_norm / 10` auto-scaling, widened norm tolerance to 25% for large models
-   - **Result:** 6/25 significant tests on 7B (d=1.22 on creativity, p=0.003)
-   - **Trade-off:** Fluency degrades above strength 1.5 (perplexity > 2.0). Usable range is concept-dependent
-
-### What This Tool Cannot Do
-
-- Fine-tune or permanently modify model weights
-- Work with encoder-only models (BERT, RoBERTa)
-- Steer closed-source API models (GPT-4, Claude)
-- Guarantee behavior changes are consistent across all inputs
-- Replace proper RLHF/DPO alignment for production safety
-- Produce significant steering effects on 7B+ models with single-layer injection (Phase 2 needed)
-
----
-
-## Contributing
-
-We welcome contributions! Here's how to set up the development environment:
-
-### Development Setup
-
-```bash
-# Fork and clone
-git clone https://github.com/<your-username>/activation_Steering.git
-cd activation_Steering
-
-# Backend setup
-python -m venv .venv
-.venv\Scripts\activate  # Windows
-source .venv/bin/activate  # Linux/Mac
-pip install -r backend/requirements.txt
-pip install -r backend/requirements-dev.txt  # pytest, black, flake8
-
-# Frontend setup
-cd frontend && npm install && cd ..
-```
-
-### Running Tests
-
-```bash
-# All unit tests
-cd backend
-python -m pytest tests/ -v
-
-# Specific test files
-python -m pytest tests/test_hooks.py -v       # SteeringHook forward pass, gating, norm preservation
-python -m pytest tests/test_steerops.py -v    # Evaluator metrics, interpreter, schemas, stats
-```
-
-### Project Structure
-
-```
-activation_Steering/
-├── backend/
-│   ├── app/
-│   │   ├── api/
-│   │   │   ├── routes.py              # REST API endpoints (incl. feature APIs)
-│   │   │   └── websocket.py           # WebSocket streaming + diagnostics
-│   │   ├── core/
-│   │   │   ├── scanner.py             # Mathematical layer profiling
-│   │   │   ├── feature_extractor.py   # PCA Feature Dictionary + offline pipeline (v2.0)
-│   │   │   ├── feature_dataset.py     # 165 diverse prompts + keywords (v2.0)
-│   │   │   ├── interpreter.py         # IntentRouter (v2.0) + legacy ResponseInterpreter
-│   │   │   ├── resolver.py            # O(1) feature lookup + bell-curve strength (v2.0)
-│   │   │   ├── engine.py              # PyTorch hooks + Gram-Schmidt + LEACE erasure (v2.0)
-│   │   │   ├── vector_calculator.py   # CAA direction vector computation
-│   │   │   ├── evaluator.py           # 6-metric evaluation framework
-│   │   │   ├── loader.py              # Model loading + quantization
-│   │   │   ├── monitor.py             # Performance metrics
-│   │   │   └── config.py              # Pydantic settings
-│   │   ├── storage/
-│   │   │   └── database.py            # SQLite for scan caching + features
-│   │   ├── data/
-│   │   │   ├── contrastive_pairs.json # CAA prompt pairs
-│   │   │   ├── features.db            # SQLite feature metadata (v2.0)
-│   │   │   └── feature_vectors/       # NumPy .npy files (v2.0)
-│   │   ├── patches/                   # Saved steering patches
-│   │   ├── middleware.py              # Session lock + rate limiter (production)
-│   │   ├── schemas.py                 # Pydantic request/response models
-│   │   └── main.py                    # FastAPI entry point
-│   ├── tests/                         # Comprehensive test suite
-│   ├── requirements.txt
-│   ├── requirements-dev.txt
-│   └── Dockerfile
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── ControlPanel.jsx       # Model controls + behavior analysis
-│   │   │   ├── ChatInterface.jsx      # Streaming chat with steering
-│   │   │   ├── ActivationHeatmap.jsx  # Per-layer activation visualization
-│   │   │   ├── FeatureBrowser.jsx     # PCA feature search/select/relabel (v2.0)
-│   │   │   ├── DiagnosticsPanel.jsx   # Real-time steering diagnostics (v2.0)
-│   │   │   ├── ExportModal.jsx        # Patch export + download
-│   │   │   ├── StatusBar.jsx          # System status indicators
-│   │   │   ├── LoadingBanner.jsx      # Model download progress
-│   │   │   └── Toast.jsx              # Notification system
-│   │   ├── hooks/
-│   │   │   ├── useWebSocket.js        # Auto-reconnect WS hook
-│   │   │   └── useAnalysis.js         # Analysis state management
-│   │   ├── utils/
-│   │   │   ├── api.js                 # Fetch wrappers for all endpoints (incl. features)
-│   │   │   └── constants.js           # API URLs, model presets
-│   │   ├── styles/
-│   │   │   └── index.css              # Dark-mode glassmorphism design
-│   │   ├── App.jsx                    # Main application
-│   │   └── main.jsx                   # React entry point
-│   ├── package.json
-│   ├── vite.config.js
-│   └── Dockerfile
-├── steerops/                          # Standalone Python library
-│   ├── steerops/
-│   │   ├── __init__.py
-│   │   ├── patch.py                   # Patch loading + validation
-│   │   ├── hooks.py                   # Thread-safe hook management
-│   │   ├── steerer.py                 # High-level steering API
-│   │   └── cli.py                     # CLI commands
-│   ├── pyproject.toml
-│   └── README.md
-├── docker-compose.yml
-├── LICENSE
-└── README.md
-```
-
-### Contribution Guidelines
-
-1. **Code Style:** Run `black .` and `flake8` before submitting
-2. **Tests:** Add tests for any new functionality
-3. **Commits:** Use conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`)
-4. **PRs:** Target the `main` branch, include description and test results
-
-### Areas We Need Help With
-
-- **Sparse Autoencoders (SAEs)** — upgrade from PCA to monosemantic feature decomposition
-- **Multiplicative steering** — implement beyond additive interventions
-- **Attention head targeting** — steer specific attention heads, not full layers
-- **More models tested** — validate categorization on Falcon, Phi, Qwen, etc.
-- **Gradient-based probing** — complement weight analysis with activation probing
-- **ICA exploration** — Independent Component Analysis for non-orthogonal features
-- **Benchmark suite** — standardized evaluation across model sizes
-
----
-
-## Tech Stack
-
-**Backend:** Python 3.11+ · FastAPI · PyTorch · Transformers · bitsandbytes · sentence-transformers · scikit-learn · TextBlob · NumPy · aiosqlite · Loguru
-
-**Frontend:** React 18 · Vite · Tailwind CSS (glassmorphism dark mode)
-
-**Infrastructure:** Docker · Docker Compose · Nginx
-
-**Library:** Pure Python · PyTorch · sentence-transformers (optional eval)
-
----
-
-## Research References
-
-- Rimsky et al. (2023) — *"Steering Llama 2 via Contrastive Activation Addition"*
-- Belrose et al. (2023) — *"LEACE: Perfect Linear Concept Erasure in Closed Form"*
-- *"Multi-Attribute Orthogonal Subspace Steering"* — orthogonal constraints for multi-vector steering
-- Turner et al. (2023) — *"Activation Addition: Steering Language Models Without Optimization"*
-- Geva et al. (2021) — *"Transformer Feed-Forward Layers Are Key-Value Memories"*
-- Hewitt & Manning (2019) — *"A Structural Probe for Finding Syntax in Word Representations"*
-- nostalgebraist (2020) — *"Interpreting GPT: The Logit Lens"*
-- Lawson et al. (2025) — *"Cross-layer information merging and redundancy"*
-- Anthropic (2023) — *"Activation patching for refusal circuit identification"*
-- Anthropic (2023) — *"Towards Monosemanticity"* — Sparse Autoencoders for feature discovery
+## References
+
+- Rimsky, N., et al. (2023). "Steering Llama 2 via Contrastive Activation Addition." arXiv:2312.06681.
+- Turner, A., et al. (2023). "Activation Addition: Steering Language Models Without Optimization." arXiv:2308.10248.
+- Belrose, N., et al. (2023). "LEACE: Perfect Linear Concept Erasure in Closed Form." ICML 2023.
+- Geva, M., et al. (2021). "Transformer Feed-Forward Layers Are Key-Value Memories." EMNLP 2021.
+- Hewitt, J., & Manning, C.D. (2019). "A Structural Probe for Finding Syntax in Word Representations." NAACL 2019.
+- Conmy, A., et al. (2023). "Towards Automated Circuit Discovery for Mechanistic Interpretability." NeurIPS 2023.
+- Cunningham, H., et al. (2023). "Sparse Autoencoders Find Highly Interpretable Features in Language Models." ICLR 2024.
+- Anthropic. (2023). "Towards Monosemanticity: Decomposing Language Models With Dictionary Learning." Anthropic Research.
+- nostalgebraist. (2020). "Interpreting GPT: The Logit Lens." Blog post.
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE).

@@ -36,7 +36,7 @@ class Evaluator:
         self._embed_model = None
         self._embed_ready = False
 
-    # ── Lazy-load sentence transformer ────────────────────────
+    # --- Lazy-load sentence transformer---
     def _ensure_embedder(self) -> bool:
         """Load the embedding model once (same one used by interpreter)."""
         if self._embed_ready:
@@ -44,16 +44,14 @@ class Evaluator:
         self._embed_ready = True
         try:
             from sentence_transformers import SentenceTransformer
-            self._embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+            self._embed_model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
             logger.info("Evaluator: loaded embedding model")
             return True
         except Exception as e:
             logger.warning(f"Evaluator: embedding model unavailable: {e}")
             return False
 
-    # ══════════════════════════════════════════════════════════
-    # ║  Main entry point                                      ║
-    # ══════════════════════════════════════════════════════════
+    # --- Main entry point ---
 
     def evaluate(
         self,
@@ -92,10 +90,10 @@ class Evaluator:
         )
 
         for prompt in test_prompts:
-            # ── Baseline (no steering) ────────────────────────
+            # --- Baseline (no steering)---
             baseline_text = self._generate(model, tokenizer, prompt, max_tokens)
 
-            # ── Steered output ────────────────────────────────
+            # --- Steered output---
             try:
                 for cfg in steering_configs:
                     direction_vector = None
@@ -116,7 +114,7 @@ class Evaluator:
             finally:
                 engine.clear_interventions()
 
-            # ── Compute metrics ───────────────────────────────
+            # --- Compute metrics---
             metrics = self._compute_metrics(
                 model, tokenizer, prompt,
                 baseline_text, steered_text,
@@ -153,9 +151,7 @@ class Evaluator:
             },
         }
 
-    # ══════════════════════════════════════════════════════════
-    # ║  Generation                                            ║
-    # ══════════════════════════════════════════════════════════
+    # --- Generation ---
 
     @staticmethod
     def _generate(model: Any, tokenizer: Any, prompt: str, max_tokens: int) -> str:
@@ -189,9 +185,7 @@ class Evaluator:
         generated = outputs[0][inputs["input_ids"].shape[1]:]
         return tokenizer.decode(generated, skip_special_tokens=True)
 
-    # ══════════════════════════════════════════════════════════
-    # ║  Metrics computation                                   ║
-    # ══════════════════════════════════════════════════════════
+    # --- Metrics computation ---
 
     def _compute_metrics(
         self,
@@ -207,7 +201,6 @@ class Evaluator:
         """Compute all production-grade metrics."""
         metrics: Dict[str, float] = {}
 
-        # ── 1. Basic metrics ──────────────────────────────────
         base_words = baseline.split()
         steer_words = steered.split()
         metrics["baseline_length"] = len(base_words)
@@ -215,7 +208,6 @@ class Evaluator:
         metrics["length_delta"] = len(steer_words) - len(base_words)
         metrics["length_ratio"] = len(steer_words) / max(len(base_words), 1)
 
-        # Vocabulary overlap (Jaccard)
         base_set = set(w.lower() for w in base_words)
         steer_set = set(w.lower() for w in steer_words)
         union = base_set | steer_set
@@ -228,7 +220,6 @@ class Evaluator:
         steer_tokens = tokenizer.encode(steered, add_special_tokens=False)
         max_len = max(len(base_tokens), len(steer_tokens))
         if max_len > 0:
-            # Pad shorter sequence for alignment
             matched = sum(
                 1 for a, b in zip(base_tokens, steer_tokens) if a == b
             )
@@ -238,7 +229,6 @@ class Evaluator:
             metrics["token_match_ratio"] = 1.0
             metrics["token_divergence"] = 0.0
 
-        # ── 2. Semantic Shift (cosine distance) ───────────────
         if has_embedder and self._embed_model:
             embeddings = self._embed_model.encode(
                 [baseline, steered], convert_to_tensor=True
@@ -252,7 +242,7 @@ class Evaluator:
             metrics["semantic_similarity"] = 0.0
             metrics["semantic_shift"] = 0.0
 
-        # ── 3. Perplexity Delta ───────────────────────────────
+        # --- 3. Perplexity Delta---
         base_ppl = self._compute_perplexity(model, tokenizer, prompt + " " + baseline)
         steer_ppl = self._compute_perplexity(model, tokenizer, prompt + " " + steered)
         metrics["baseline_perplexity"] = base_ppl
@@ -263,7 +253,6 @@ class Evaluator:
             steer_ppl / max(base_ppl, 1e-6), 4
         )
 
-        # ── 4. Concept Alignment (if target concept given) ────
         if has_embedder and self._embed_model and target_concept:
             concept_anchors = self._get_concept_anchors(target_concept)
             if concept_anchors:
@@ -292,7 +281,6 @@ class Evaluator:
                     steer_align - base_align, 4
                 )
 
-        # ── 5. Steering Efficiency ────────────────────────────
         if total_strength > 0 and metrics.get("semantic_shift", 0) > 0:
             metrics["steering_efficiency"] = round(
                 metrics["semantic_shift"] / total_strength, 4
@@ -300,7 +288,7 @@ class Evaluator:
         else:
             metrics["steering_efficiency"] = 0.0
 
-        # ── 6. Sentiment / Tone shift ─────────────────────────
+        # --- 6. Sentiment / Tone shift---
         base_sentiment = self._simple_sentiment(baseline)
         steer_sentiment = self._simple_sentiment(steered)
         metrics["baseline_sentiment"] = base_sentiment
@@ -309,9 +297,7 @@ class Evaluator:
 
         return metrics
 
-    # ══════════════════════════════════════════════════════════
-    # ║  Perplexity                                            ║
-    # ══════════════════════════════════════════════════════════
+    # --- Perplexity ---
 
     @staticmethod
     def _compute_perplexity(model: Any, tokenizer: Any, text: str) -> float:
@@ -328,12 +314,11 @@ class Evaluator:
                 loss = outputs.loss.item()
 
             return round(math.exp(min(loss, 20)), 2)  # Cap at e^20
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Perplexity computation failed: {e}")
             return 0.0
 
-    # ══════════════════════════════════════════════════════════
-    # ║  Concept anchors for alignment scoring                 ║
-    # ══════════════════════════════════════════════════════════
+    # --- Concept anchors for alignment scoring ---
 
     @staticmethod
     def _get_concept_anchors(concept: str) -> List[str]:
@@ -344,6 +329,28 @@ class Evaluator:
                 "I appreciate your patience. Let me explain clearly.",
                 "That's a great observation. Here's what I think.",
                 "I understand your concern and want to address it thoughtfully.",
+            ],
+            "hindi_honorific": [
+                "आपका बहुत-बहुत धन्यवाद, कृपया बताइए मैं आपकी क्या सहायता कर सकता हूँ।",
+                "श्रीमान जी, आपका अनुरोध स्वीकार है। कृपया थोड़ा धैर्य रखें।",
+                "आदरणीय महोदय, आपकी सेवा में हम सदैव तत्पर हैं।",
+                "नमस्कार जी, कृपया अपनी बात विस्तार से बताइए।",
+                "आपकी कृपा है जो आपने हमसे संपर्क किया। हम आपकी पूरी मदद करेंगे।",
+                "जी हाँ, आप बिलकुल सही कह रहे हैं। कृपया आगे बताइए।",
+            ],
+            "bengali_honorific": [
+                "আপনাকে অনেক ধন্যবাদ, দয়া করে বলুন আমি কীভাবে সাহায্য করতে পারি।",
+                "মহাশয়, আপনার অনুরোধ গ্রহণ করা হয়েছে। অনুগ্রহ করে একটু ধৈর্য রাখুন।",
+                "আদরণীয় মহাশয়, আপনার সেবায় আমরা সদা প্রস্তুত।",
+                "নমস্কার, দয়া করে আপনার বিষয়টি বিস্তারিত বলুন।",
+                "আপনার কৃতজ্ঞতা জানাই যে আপনি আমাদের সাথে যোগাযোগ করেছেন।",
+            ],
+            "tamil_honorific": [
+                "மிக்க நன்றி, தயவுசெய்து நான் எவ்வாறு உதவ முடியும் என்று சொல்லுங்கள்.",
+                "ஐயா, உங்கள் கோரிக்கை ஏற்றுக்கொள்ளப்பட்டது. தயவுசெய்து பொறுமையாக இருங்கள்.",
+                "மரியாதைக்குரிய ஐயா, உங்கள் சேவையில் நாங்கள் எப்போதும் தயாராக இருக்கிறோம்.",
+                "வணக்கம், தயவுசெய்து உங்கள் விஷயத்தை விரிவாகக் கூறுங்கள்.",
+                "நீங்கள் எங்களைத் தொடர்பு கொண்டதற்கு நன்றி தெரிவிக்கிறோம்.",
             ],
             "toxicity": [
                 "I won't engage with harmful language or hate speech.",
@@ -372,9 +379,7 @@ class Evaluator:
         }
         return anchors.get(concept, [])
 
-    # ══════════════════════════════════════════════════════════
-    # ║  Sentiment heuristic                                   ║
-    # ══════════════════════════════════════════════════════════
+    # --- Sentiment heuristic ---
 
     @staticmethod
     def _simple_sentiment(text: str) -> float:
@@ -383,11 +388,10 @@ class Evaluator:
             from textblob import TextBlob
             return round(TextBlob(text).sentiment.polarity, 4)
         except Exception:
+            logger.debug("TextBlob not available for sentiment analysis")
             return 0.0
 
-    # ══════════════════════════════════════════════════════════
-    # ║  Aggregation                                           ║
-    # ══════════════════════════════════════════════════════════
+    # --- Aggregation ---
 
     @staticmethod
     def _aggregate_metrics(all_metrics: List[Dict[str, float]]) -> Dict[str, float]:
@@ -415,9 +419,7 @@ class Evaluator:
 
         return agg
 
-    # ══════════════════════════════════════════════════════════
-    # ║  Overall score (0-100)                                 ║
-    # ══════════════════════════════════════════════════════════
+    # --- Overall score (0-100) ---
 
     @staticmethod
     def _compute_overall_score(agg: Dict[str, float]) -> Dict[str, Any]:

@@ -34,9 +34,9 @@ from app.core.evaluator import Evaluator
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-8s | %(message)s")
 logger = logging.getLogger(__name__)
 
-# ──────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 # Configuration
-# ──────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 MODEL_NAME = "Qwen/Qwen2.5-0.5B"
 MAX_TOKENS = 40
 STRENGTH_SWEEP = [0.5, 1.0, 1.5, 2.0, 2.5]
@@ -125,9 +125,9 @@ CONCEPTS = {
     },
 }
 
-# ──────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 # External Validator (unitary/toxic-bert) — only for toxicity
-# ──────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 class ExternalToxicityValidator:
     def __init__(self):
         try:
@@ -152,9 +152,9 @@ class ExternalToxicityValidator:
             return 0.0
 
 
-# ──────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 # Statistical Utilities
-# ──────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 def compute_stats(data: list) -> dict:
     if not data:
         return {"mean": 0.0, "std": 0.0, "n": 0}
@@ -188,9 +188,9 @@ def cohens_d(group_a: list, group_b: list) -> float:
     return round(float((mean_b - mean_a) / pooled_std), 4)
 
 
-# ──────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 # Main evaluation
-# ──────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 async def run_definitive_test():
     wall_start = time.perf_counter()
 
@@ -198,7 +198,7 @@ async def run_definitive_test():
     logger.info(" STEEROPS DEFINITIVE PIPELINE TEST — ALL 5 CONCEPTS")
     logger.info("=" * 70)
 
-    # ── Step 1: Load Model ──────────────────────────────────
+    # --- Step 1: Load Model---
     mm = ModelManager.get_instance()
     t0 = time.perf_counter()
     try:
@@ -214,7 +214,7 @@ async def run_definitive_test():
     evaluator = Evaluator()
     ext_validator = ExternalToxicityValidator()
 
-    # ── Step 2: Scan Layers ─────────────────────────────────
+    # --- Step 2: Scan Layers---
     logger.info("Running Layer Scanner (auto-detect)...")
     t0 = time.perf_counter()
     scanner = LayerScanner(mm)
@@ -230,7 +230,7 @@ async def run_definitive_test():
             cat_map[cat] = []
         cat_map[cat].append({"layer": r["layer_index"], "confidence": r["confidence"]})
 
-    # ── Step 3: Iterate all concepts ────────────────────────
+    # --- Step 3: Iterate all concepts---
     report = {
         "title": "SteerOps Definitive Pipeline Test",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -252,7 +252,7 @@ async def run_definitive_test():
         logger.info(f"CONCEPT: {concept_cfg['display']} ({concept_id})")
         logger.info(f"{'='*60}")
 
-        # ── Auto-route via scanner ──────────────────────────
+        # --- Auto-route via scanner---
         candidates = [r for r in scan_results if r.get("category") in concept_cfg["target_categories"]]
         candidates.sort(key=lambda x: x["confidence"], reverse=True)
 
@@ -270,7 +270,7 @@ async def run_definitive_test():
 
         logger.info(f"Scanner routed → Layer {target_layer} ({route_cat}, conf: {route_conf:.2f})")
 
-        # ── Compute CAA vector ──────────────────────────────
+        # --- Compute CAA vector---
         t0 = time.perf_counter()
         try:
             vec_result = calculator.compute_vector(mm.model, mm.tokenizer, concept_id, target_layer)
@@ -294,7 +294,7 @@ async def run_definitive_test():
 
         logger.info(f"CAA vector computed in {caa_time}s (dim={vec_dim}, mag={vec_magnitude:.4f})")
 
-        # ── Coefficient sweep ───────────────────────────────
+        # --- Coefficient sweep---
         sweep_data = []
         all_baseline_shifts = []  # for each prompt, cosine similarities
         all_baseline_texts = []
@@ -387,7 +387,7 @@ async def run_definitive_test():
 
             sweep_data.append(sweep_entry)
 
-        # ── Find best strength (highest absolute concept delta with preserved fluency) ──
+        # --- Find best strength (highest absolute concept delta with preserved fluency)---
         best_idx = 0
         best_score = 0
         for i, sw in enumerate(sweep_data):
@@ -402,7 +402,7 @@ async def run_definitive_test():
 
         best_strength = concept_sweep[best_idx]
 
-        # ── Documentation examples at best strength ─────────
+        # --- Documentation examples at best strength---
         doc_examples = []
         if all_steered_texts_by_strength.get(best_strength):
             for idx in range(min(3, len(concept_cfg["prompts"]))):
@@ -437,7 +437,7 @@ async def run_definitive_test():
 
         report["results"].append(concept_result)
 
-    # ── Pipeline integrity metrics ──────────────────────────
+    # --- Pipeline integrity metrics---
     total_time = round(time.perf_counter() - wall_start, 1)
     report["total_execution_time_s"] = total_time
 
@@ -478,12 +478,12 @@ async def run_definitive_test():
         },
     }
 
-    # ── Save output ─────────────────────────────────────────
+    # --- Save output---
     output_file = "steerops_definitive_results.json"
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, default=str)
 
-    # ── Console summary ─────────────────────────────────────
+    # --- Console summary---
     print("\n" + "=" * 90)
     print(" STEEROPS DEFINITIVE PIPELINE TEST — COMPLETE RESULTS")
     print("=" * 90)
@@ -509,7 +509,7 @@ async def run_definitive_test():
             ppr = sw["perplexity_ratio"]["mean"]
             cd = sw["statistical_test"]["cohens_d"]
             pv = sw["statistical_test"]["paired_t_test"]["p_value"]
-            sig = "✅" if sw["statistical_test"]["paired_t_test"]["significant"] else "❌"
+            sig = "PASS" if sw["statistical_test"]["paired_t_test"]["significant"] else "FAIL"
             print(f"  {s:<5} | {dm:>7.4f} ± {ds:<10.4f}  | {sm:>7.4f} ± {ss:<10.4f}  | {ppr:<8.4f} | {cd:<8.4f} | {pv:<8.4f} | {sig}")
 
     print("\n" + "=" * 90)
@@ -517,7 +517,7 @@ async def run_definitive_test():
     print("=" * 90)
     pi = report["pipeline_summary"]["pipeline_integrity"]
     for k, v in pi.items():
-        status = "✅" if v else "❌"
+        status = "PASS" if v else "FAIL"
         print(f"  {status} {k}")
     print(f"\n  Significant tests: {report['pipeline_summary']['significant_tests']}")
     print(f"  Overall effect size: {report['pipeline_summary']['effect_size_overall']['mean']:.4f} ± {report['pipeline_summary']['effect_size_overall']['std']:.4f}")

@@ -1,7 +1,7 @@
 """
 Patch loader, validator, and merger.
 
-A SteerOps patch JSON file has this structure:
+A SteerOps patch JSON file:
 {
   "metadata": { "name": "...", "model": "...", "version": "1.0", ... },
   "interventions": [
@@ -18,8 +18,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path BBB  
-
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 logger = logging.getLogger("steerops")
@@ -41,29 +40,14 @@ class Intervention:
 
 @dataclass
 class Patch:
-    """
-    Parsed and validated SteerOps patch.
+    """Parsed and validated SteerOps patch."""
 
-    Load from file:
-        patch = Patch.from_file("fix_helpfulness.json")
-
-    Load from dict:
-        patch = Patch.from_dict(data)
-
-    Load from URL:
-        patch = Patch.from_url("https://example.com/patch.json")
-
-    Merge patches:
-        combined = Patch.merge([patch1, patch2], name="combined")
-    """
     name: str = ""
     model: str = ""
     version: str = "1.0"
     description: str = ""
     interventions: List[Intervention] = field(default_factory=list)
     raw: Dict[str, Any] = field(default_factory=dict)
-
-    # ── Factory methods ──────────────────────────────────────
 
     @classmethod
     def from_file(cls, path: Union[str, Path]) -> "Patch":
@@ -107,7 +91,7 @@ class Patch:
         """Load a patch from a remote URL (https only)."""
         import urllib.request
 
-        # Security: restrict to HTTPS to prevent SSRF (file://, ftp://, internal IPs)
+        # Restrict to HTTPS to prevent SSRF via file://, ftp://, internal IPs
         if not url.startswith("https://"):
             raise ValueError(
                 f"Only https:// URLs are allowed for security. Got: {url[:50]}"
@@ -133,20 +117,10 @@ class Patch:
         """
         Merge multiple patches into one.
 
-        Parameters
-        ----------
-        patches : List[Patch]
-            Patches to merge.
-        name : str
-            Name for the merged patch.
-        strategy : str
-            'average' - average strengths for overlapping layers
-            'sum' - sum strengths for overlapping layers
-            'first' - keep first encountered for each layer
-
-        Returns
-        -------
-        A new merged Patch.
+        Strategies for overlapping layers:
+        - 'average': average strengths
+        - 'sum': sum strengths
+        - 'first': keep first encountered
         """
         if not patches:
             raise ValueError("Cannot merge empty list of patches")
@@ -154,7 +128,6 @@ class Patch:
         if len(patches) == 1:
             return patches[0]
 
-        # Collect interventions by layer
         layer_interventions: Dict[int, List[Intervention]] = {}
         for patch in patches:
             for iv in patch.interventions:
@@ -162,7 +135,6 @@ class Patch:
                     layer_interventions[iv.layer] = []
                 layer_interventions[iv.layer].append(iv)
 
-        # Merge by strategy
         merged_interventions = []
         for layer_idx in sorted(layer_interventions.keys()):
             ivs = layer_interventions[layer_idx]
@@ -171,7 +143,6 @@ class Patch:
                 merged_interventions.append(ivs[0])
             elif strategy == "sum":
                 total_strength = sum(iv.strength for iv in ivs)
-                # Use direction vector from first one that has it
                 vec = next(
                     (iv.direction_vector for iv in ivs if iv.direction_vector),
                     None,
@@ -202,7 +173,7 @@ class Patch:
         models = list({p.model for p in patches if p.model})
 
         logger.info(
-            f"Merged {len(patches)} patches → {len(merged_interventions)} "
+            f"Merged {len(patches)} patches -> {len(merged_interventions)} "
             f"interventions ({strategy})"
         )
 
@@ -215,10 +186,8 @@ class Patch:
             raw={},
         )
 
-    # ── Helpers ──────────────────────────────────────────────
-
     def validate_for_model(self, num_layers: int) -> List[str]:
-        """Return a list of warnings if the patch may be incompatible."""
+        """Return warnings if the patch may be incompatible with a model of this depth."""
         warnings = []
         for iv in self.interventions:
             if iv.layer >= num_layers:
@@ -232,7 +201,7 @@ class Patch:
         return warnings
 
     def to_dict(self) -> Dict[str, Any]:
-        """Export the patch as a dictionary."""
+        """Export the patch as a serializable dictionary."""
         return {
             "metadata": {
                 "name": self.name,
@@ -260,7 +229,6 @@ class Patch:
         return path
 
     def summary(self) -> str:
-        """Human-readable summary."""
         lines = [
             f"Patch: {self.name}",
             f"Model: {self.model or 'any'}",

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 
-// ── Resizable panel constants ──────────────────────────────
+// --- Resizable panel constants ---
 const MIN_PANEL = 240;
 const MAX_PANEL = 500;
 const DEFAULT_PANEL = 320;
@@ -22,7 +22,7 @@ import {
 } from './utils/api';
 
 export default function App() {
-    // ── State ──────────────────────────────────────────────────
+    // --- State ---
     const [mode, setMode] = useState('local'); // Determines UI view
 
     // Core model info per mode
@@ -80,7 +80,7 @@ export default function App() {
     const streamRef = useRef('');
     const stoppedRef = useRef(false);
 
-    // ── Resizable panels ─────────────────────────────────────
+    // --- Resizable panels ---
     const [leftWidth, setLeftWidth] = useState(DEFAULT_PANEL);
     const [rightWidth, setRightWidth] = useState(DEFAULT_PANEL);
     const dragging = useRef(null); // 'left' | 'right' | null
@@ -100,7 +100,7 @@ export default function App() {
         return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
     }, []);
 
-    // ── Analysis Hook ──────────────────────────────────────────
+    // --- Analysis Hook ---
     const analysis = useAnalysis();
 
     // Keep analysis hook mode in sync with app mode
@@ -108,10 +108,10 @@ export default function App() {
         analysis.setMode(mode);
     }, [mode, analysis]);
 
-    // ── Toast Notifications ──────────────────────────────────────
+    // --- Toast Notifications ---
     const { toasts, addToast, removeToast } = useToast();
 
-    // ── WebSocket ──────────────────────────────────────────────
+    // --- WebSocket ---
     const onToken = useCallback((data) => {
         if (stoppedRef.current) return; // Ignore tokens after stop
         streamRef.current += data.text;
@@ -160,7 +160,7 @@ export default function App() {
 
     const { isConnected, sendMessage } = useWebSocket({ onToken, onDone, onError });
 
-    // ── Stop Generation ─────────────────────────────────────────
+    // --- Stop Generation ---
     const handleStop = useCallback(() => {
         stoppedRef.current = true;
         // Send stop signal to WebSocket
@@ -181,7 +181,7 @@ export default function App() {
         setIsGenerating(false);
     }, [sendMessage]);
 
-    // ── Polling for model info ─────────────────────────────────
+    // --- Polling for model info ---
     const fetchModelInfo = useCallback(async () => {
         try {
             const models = await getModels();
@@ -200,7 +200,7 @@ export default function App() {
         return () => clearInterval(interval);
     }, [fetchModelInfo]);
 
-    // ── Model Load / Unload ────────────────────────────────────
+    // --- Model Load / Unload ---
     const handleLoadModel = useCallback(
         async (modelName, options = {}) => {
             setModelLoading(true);
@@ -273,7 +273,7 @@ export default function App() {
         }
     }, [analysis, isRemote]);
 
-    // ── Remote Connect / Disconnect ─────────────────────────────
+    // --- Remote Connect / Disconnect ---
     const handleRemoteConnect = useCallback(
         async (modelName, hfToken = null) => {
             // If a local model is still downloading, don't interrupt it.
@@ -328,7 +328,7 @@ export default function App() {
         }
     }, [analysis]);
 
-    // ── Handlers ───────────────────────────────────────────────
+    // --- Handlers ---
     const handleSend = useCallback(
         async (prompt) => {
             setMessages((prev) => [...prev, { role: 'user', content: prompt }]);
@@ -470,7 +470,7 @@ export default function App() {
 
     const steeringEnabled = selectedLayers.length > 0 && steeringStrength !== 0;
 
-    // ── Render ─────────────────────────────────────────────────
+    // --- Render ---
     return (
         <div className="flex flex-col h-screen">
             <StatusBar

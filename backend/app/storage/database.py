@@ -24,7 +24,7 @@ class DatabaseManager:
         self.db_path = db_path
         self._db: Optional[aiosqlite.Connection] = None
 
-    # ── Lifecycle ─────────────────────────────────────────────
+    # --- Lifecycle ---
     async def initialize(self) -> None:
         """Open the DB connection and create tables if needed."""
         os.makedirs(os.path.dirname(self.db_path) or ".", exist_ok=True)
@@ -81,9 +81,7 @@ class DatabaseManager:
         )
         await self._db.commit()
 
-    # ╔══════════════════════════════════════════════════════════╗
-    # ║             MODEL PROFILES (scan cache)                 ║
-    # ╚══════════════════════════════════════════════════════════╝
+    # --- Model Profiles ---
 
     async def get_model_profile(self, model_name: str) -> Optional[Dict[str, Any]]:
         """Return cached profile or None."""
@@ -126,9 +124,7 @@ class DatabaseManager:
         row = await cursor.fetchone()
         return row["id"]  # type: ignore[index]
 
-    # ╔══════════════════════════════════════════════════════════╗
-    # ║                  LAYER MAPPINGS                         ║
-    # ╚══════════════════════════════════════════════════════════╝
+    # --- Layer Mappings ---
 
     async def get_layer_mappings(
         self, model_name: str
@@ -183,9 +179,7 @@ class DatabaseManager:
             )
         await self._db.commit()
 
-    # ╔══════════════════════════════════════════════════════════╗
-    # ║                      PATCHES                            ║
-    # ╚══════════════════════════════════════════════════════════╝
+    # --- Patches ---
 
     async def save_patch(
         self,

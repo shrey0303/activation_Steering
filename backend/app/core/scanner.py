@@ -1,5 +1,5 @@
 """
-🌟 Mathematical Layer Scanner — Core Innovation.
+ Mathematical Layer Scanner — Core Innovation.
 
 Analyses a transformer model's weight matrices to build a functional
 layer map **without running any prompts**.  Uses:
@@ -29,7 +29,7 @@ from sklearn.cluster import KMeans
 from app.core.loader import ModelManager
 
 
-# ── Layer functional categories (research-backed) ─────────────
+# --- Layer functional categories (research-backed)---
 #
 # Each category is grounded in published mechanistic interpretability
 # research.  Position ranges are approximate — actual assignment uses
@@ -125,9 +125,7 @@ class LayerScanner:
     def __init__(self, model_manager: ModelManager) -> None:
         self.mm = model_manager
 
-    # ╔══════════════════════════════════════════════════════════╗
-    # ║                   PUBLIC INTERFACE                       ║
-    # ╚══════════════════════════════════════════════════════════╝
+    # --- Public Interface ---
 
     def scan(self) -> List[Dict[str, Any]]:
         """
@@ -154,7 +152,7 @@ class LayerScanner:
 
         logger.info(f"🔬 Scanning {n_layers} layers of {self.mm.model_name}...")
 
-        # ── Step 1: Extract per-layer features ────────────────
+        # --- Step 1: Extract per-layer features---
         features: List[Dict[str, float]] = []
         for idx, layer_module in enumerate(layers):
             feat = self._extract_layer_features(idx, layer_module, n_layers)
@@ -162,14 +160,14 @@ class LayerScanner:
             if (idx + 1) % 8 == 0 or idx == n_layers - 1:
                 logger.debug(f"   Scanned layer {idx + 1}/{n_layers}")
 
-        # ── Step 2: Compute inter-layer similarity ────────────
+        # --- Step 2: Compute inter-layer similarity---
         similarities = self._compute_layer_similarities(features)
 
-        # ── Step 3: Categorise layers ─────────────────────────
+        # --- Step 3: Categorise layers---
         profiles = self._categorise_layers(features, similarities, n_layers)
 
         elapsed = time.perf_counter() - t0
-        logger.info(f"✅ Scan complete in {elapsed:.1f}s")
+        logger.info(f"Scan complete in {elapsed:.1f}s")
         return profiles
 
     def get_scan_hash(self) -> str:
@@ -183,9 +181,7 @@ class LayerScanner:
         )
         return hashlib.sha256(info.encode()).hexdigest()[:16]
 
-    # ╔══════════════════════════════════════════════════════════╗
-    # ║            STEP 1: FEATURE EXTRACTION                   ║
-    # ╚══════════════════════════════════════════════════════════╝
+    # --- Step 1: Feature Extraction ---
 
     @staticmethod
     def _dequantize_param(param: torch.nn.Parameter) -> Optional[torch.Tensor]:
@@ -200,7 +196,7 @@ class LayerScanner:
         Returns None if the parameter cannot be dequantised.
         """
         try:
-            # ── bitsandbytes 4-bit ────────────────────────────
+            # --- bitsandbytes 4-bit---
             module_type = type(param).__module__ or ""
             cls_name = type(param).__qualname__ or ""
 
@@ -214,7 +210,7 @@ class LayerScanner:
                         param.data, param.quant_state
                     ).float().cpu()
                 except Exception:
-                    pass
+                    logger.debug(f"bnb 4-bit dequantize failed for {cls_name}")
 
             # Check if param belongs to a bnb Linear4bit layer
             if hasattr(param, "quant_state") and param.quant_state is not None:
@@ -224,17 +220,17 @@ class LayerScanner:
                         param.data, param.quant_state
                     ).float().cpu()
                 except Exception:
-                    pass
+                    logger.debug("bnb 4-bit dequantize via quant_state failed")
 
-            # ── bitsandbytes 8-bit ────────────────────────────
+            # --- bitsandbytes 8-bit---
             if hasattr(param, "SCB") or hasattr(param, "CB"):
                 try:
                     import bitsandbytes as bnb
                     return param.data.float().cpu()
                 except Exception:
-                    pass
+                    logger.debug("bnb 8-bit dequantize failed")
 
-            # ── Standard param: cast to float32 ──────────────
+            # --- Standard param: cast to float32---
             return param.detach().float().cpu()
 
         except Exception:
@@ -259,7 +255,6 @@ class LayerScanner:
             "relative_position": layer_idx / max(total_layers - 1, 1),
         }
 
-        # Collect all weight tensors in this layer (dequantised to FP32)
         weight_tensors: Dict[str, torch.Tensor] = {}
         for name, param in layer_module.named_parameters():
             w = self._dequantize_param(param)
@@ -271,19 +266,15 @@ class LayerScanner:
             features.update(self._position_heuristic(layer_idx, total_layers))
             return features
 
-        # ── SVD analysis (top-k singular values) ──────────────
         svd_features = self._svd_analysis(weight_tensors)
         features.update(svd_features)
 
-        # ── Attention weight entropy ──────────────────────────
         attn_features = self._attention_entropy(weight_tensors)
         features.update(attn_features)
 
-        # ── FFN norm analysis ─────────────────────────────────
         ffn_features = self._ffn_norm_analysis(weight_tensors)
         features.update(ffn_features)
 
-        # ── General weight statistics ─────────────────────────
         general = self._general_weight_stats(weight_tensors)
         features.update(general)
 
@@ -322,7 +313,8 @@ class LayerScanner:
                 # Randomized SVD: O(m*n*k) instead of O(m*n*min(m,n))
                 _, s, _ = svds(w_2d.astype(np.float64), k=k)
                 all_singular.append(s[::-1])  # svds returns ascending
-            except Exception:
+            except Exception as e:
+                logger.debug(f"SVD failed for weight '{name}': {e}")
                 continue
 
         if not all_singular:
@@ -378,7 +370,8 @@ class LayerScanner:
                 norms = norms[norms > 1e-10]
                 ent = float(-np.sum(norms * np.log(norms + 1e-10)))
                 attn_entropy_values.append(ent)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Attention entropy failed for '{name}': {e}")
                 continue
 
         if not attn_entropy_values:
@@ -412,7 +405,8 @@ class LayerScanner:
             try:
                 norm_val = float(torch.norm(w.float()).item())
                 ffn_norms.append(norm_val)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"FFN norm failed for '{name}': {e}")
                 continue
 
         if not ffn_norms:
@@ -437,7 +431,8 @@ class LayerScanner:
                 all_vals.append(float(np.std(flat)))
                 total_params += len(flat)
                 near_zero += int(np.sum(np.abs(flat) < 1e-4))
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Weight stats failed: {e}")
                 continue
 
         sparsity = near_zero / max(total_params, 1)
@@ -467,9 +462,7 @@ class LayerScanner:
             "total_params": 0.0,
         }
 
-    # ╔══════════════════════════════════════════════════════════╗
-    # ║       STEP 2: INTER-LAYER SIMILARITY (CKA-like)        ║
-    # ╚══════════════════════════════════════════════════════════╝
+    # --- Step 2: Inter-layer Similarity ---
 
     def _compute_layer_similarities(
         self, features: List[Dict[str, float]]
@@ -500,9 +493,7 @@ class LayerScanner:
 
         return similarities
 
-    # ╔══════════════════════════════════════════════════════════╗
-    # ║          STEP 3: LAYER CATEGORISATION                   ║
-    # ╚══════════════════════════════════════════════════════════╝
+    # --- Step 3: Layer Categorisation ---
 
     def _categorise_layers(
         self,
@@ -531,7 +522,6 @@ class LayerScanner:
             [[f.get(k, 0.0) for k in feature_keys] for f in features]
         )
 
-        # Normalise features
         col_std = feature_matrix.std(axis=0)
         col_std[col_std < 1e-10] = 1.0
         col_mean = feature_matrix.mean(axis=0)
@@ -571,7 +561,7 @@ class LayerScanner:
             cat_idx = min(cat_idx, len(CATEGORIES) - 1)
             cluster_to_category[cl] = CATEGORIES[cat_idx]
 
-        # ── Build final profiles ──────────────────────────────
+        # --- Build final profiles---
         for idx in range(n_layers):
             # Category from clustering (primary)
             cluster = int(cluster_labels[idx])
@@ -642,7 +632,7 @@ class LayerScanner:
 
         return profiles
 
-    # ── Helpers ───────────────────────────────────────────────
+    # --- Helpers---
 
     @staticmethod
     def _position_to_category(relative_pos: float) -> str:

@@ -39,7 +39,7 @@ class ResolvedLayer:
         self.confidence = confidence
         self.reason = reason
         self.feature_id = feature_id
-        self.vector = vector  # numpy or torch tensor
+        self.vector = vector
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -84,7 +84,7 @@ class LayerResolver:
                 cat = lm.get("category", "unknown")
                 self._cat_index.setdefault(cat, []).append(lm)
 
-    # ── Primary Mode: Feature Dictionary Lookup ───────────────
+    # --- Feature Dictionary Lookup ---
 
     def resolve_features(
         self,
@@ -126,11 +126,9 @@ class LayerResolver:
             direction = directions.get(fid, 1.0)
             base_strength = strengths.get(fid, 2.0)
 
-            # Bell-curve layer-aware scaling: peak at 60% depth, σ²=0.1
-            # Based on: Zou et al. "Representation Engineering" (2023)
-            # Finding: middle layers (50-70% depth) are optimal for steering;
-            # early layers break grammar, late layers have diminishing returns.
-            # CONFIGURABLE: adjust peak (0.6) and spread (0.1) per model family.
+            # Bell-curve layer-aware scaling: peak at 60% depth
+            # Based on Zou et al. "Representation Engineering" (2023):
+            # middle layers (50-70% depth) are optimal for steering
             relative_pos = feature.layer_idx / total_layers
             bell_multiplier = math.exp(-((relative_pos - 0.6) ** 2) / 0.1)
             strength = base_strength * bell_multiplier
@@ -154,7 +152,7 @@ class LayerResolver:
         logger.info(f"Resolved {len(resolved)} features to layers")
         return resolved
 
-    # ── Legacy Mode: Category-Based Resolution (backward compat)
+    # --- Legacy Mode ---
 
     def resolve(
         self,

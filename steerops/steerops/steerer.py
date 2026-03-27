@@ -1,31 +1,5 @@
 """
-Core Steerer class — the main public API for steerops.
-
-Usage:
-    from steerops import Steerer
-
-    # Load a patch and apply to a model
-    steerer = Steerer.from_patch("patch_helpfulness.json")
-    model = steerer.apply(model)
-
-    # Generate with steering active
-    output = model.generate(input_ids, max_new_tokens=100)
-
-    # Remove steering hooks
-    steerer.remove()
-
-    # One-shot convenience
-    text = Steerer.run(
-        patch_path="patch.json",
-        model_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-        prompt="Hello, how are you?",
-    )
-
-    # Compare steered vs unsteered output
-    result = steerer.compare(model, tokenizer, "Tell me about climate")
-
-    # Batch generate
-    results = steerer.batch_generate(model, tokenizer, ["prompt1", "prompt2"])
+Core Steerer class — public API for applying activation steering patches.
 """
 
 from __future__ import annotations
@@ -46,9 +20,8 @@ class Steerer:
     """
     Apply a SteerOps activation steering patch to any HuggingFace model.
 
-    The patch defines which layers to intervene on, the steering strength,
-    and optional direction vectors.  Steerer registers PyTorch forward hooks
-    that modify hidden states during generation.
+    Registers PyTorch forward hooks that modify hidden states during generation
+    based on the patch's layer interventions and direction vectors.
     """
 
     def __init__(self, patch: Patch) -> None:
@@ -57,53 +30,35 @@ class Steerer:
         self._applied = False
         self._model = None
 
-    # ── Factory methods ────────────────
-
     @classmethod
     def from_patch(cls, path: Union[str, Path]) -> "Steerer":
         """Load a Steerer from a patch JSON file."""
-        patch = Patch.from_file(path)
-        return cls(patch)
+        return cls(Patch.from_file(path))
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Steerer":
         """Load a Steerer from a patch dictionary."""
-        patch = Patch.from_dict(data)
-        return cls(patch)
+        return cls(Patch.from_dict(data))
 
     @classmethod
     def from_url(cls, url: str) -> "Steerer":
         """Load a Steerer from a remote patch URL."""
-        patch = Patch.from_url(url)
-        return cls(patch)
+        return cls(Patch.from_url(url))
 
-    # ── Core API ─────────────────────────────────────────────
+    # --- Core API ---
 
     def apply(self, model: Any) -> Any:
-        """
-        Apply steering hooks to the model.
-
-        Parameters
-        ----------
-        model : transformers.PreTrainedModel
-            Any HuggingFace causal LM model.
-
-        Returns
-        -------
-        The same model (with hooks registered).
-        """
+        """Apply steering hooks to the model. Returns the same model with hooks registered."""
         if self._applied:
             self.remove()
 
         layers = self._get_layer_modules(model)
         num_layers = len(layers)
 
-        # Validate
         warnings = self.patch.validate_for_model(num_layers)
         for w in warnings:
             logger.warning(w)
 
-        # Register hooks
         for intervention in self.patch.interventions:
             if intervention.layer >= num_layers:
                 logger.warning(
@@ -117,7 +72,6 @@ class Steerer:
                 direction = torch.tensor(
                     intervention.direction_vector, dtype=torch.float32
                 )
-                # Validate dimension
                 hidden_dim = self._get_hidden_dim(model)
                 if hidden_dim and direction.shape[0] != hidden_dim:
                     logger.warning(
@@ -150,11 +104,9 @@ class Steerer:
             logger.info(f"Removed {count} steering hooks")
 
     def is_active(self) -> bool:
-        """Whether steering hooks are currently registered."""
         return self._applied and self._hooks.active_hooks > 0
 
     def status(self) -> str:
-        """Human-readable status."""
         lines = [
             f"Patch: {self.patch.name}",
             f"Active: {self.is_active()}",
@@ -162,7 +114,7 @@ class Steerer:
         ]
         return "\n".join(lines)
 
-    # ── Convenience: one-shot generate ───────────────────────
+    # --- One-shot generation helpers ---
 
     def generate(
         self,
@@ -173,21 +125,7 @@ class Steerer:
         temperature: float = 0.7,
         **kwargs,
     ) -> str:
-        """
-        One-shot: apply patch → generate → remove → return text.
-
-        Parameters
-        ----------
-        model : transformers.PreTrainedModel
-        tokenizer : transformers.PreTrainedTokenizer
-        prompt : str
-        max_new_tokens : int
-        temperature : float
-
-        Returns
-        -------
-        Generated text string.
-        """
+        """Apply patch, generate, remove, return text."""
         self.apply(model)
         try:
             inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
@@ -201,11 +139,10 @@ class Steerer:
                     or tokenizer.eos_token_id,
                     **kwargs,
                 )
-            text = tokenizer.decode(
+            return tokenizer.decode(
                 output_ids[0][inputs["input_ids"].shape[1]:],
                 skip_special_tokens=True,
             )
-            return text
         finally:
             self.remove()
 
@@ -218,21 +155,7 @@ class Steerer:
         temperature: float = 0.7,
         **kwargs,
     ) -> List[str]:
-        """
-        Generate steered outputs for multiple prompts.
-
-        Parameters
-        ----------
-        model : transformers.PreTrainedModel
-        tokenizer : transformers.PreTrainedTokenizer
-        prompts : list of str
-        max_new_tokens : int
-        temperature : float
-
-        Returns
-        -------
-        List of generated text strings.
-        """
+        """Generate steered outputs for multiple prompts."""
         self.apply(model)
         try:
             results = []
@@ -267,14 +190,7 @@ class Steerer:
         max_new_tokens: int = 200,
         temperature: float = 0.7,
     ) -> Dict[str, str]:
-        """
-        Compare steered vs unsteered output for the same prompt.
-
-        Returns
-        -------
-        Dict with 'baseline' and 'steered' keys.
-        """
-        # Baseline (no steering)
+        """Compare steered vs unsteered output for the same prompt."""
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
         with torch.no_grad():
             base_ids = model.generate(
@@ -290,7 +206,6 @@ class Steerer:
             skip_special_tokens=True,
         )
 
-        # Steered
         steered = self.generate(
             model, tokenizer, prompt,
             max_new_tokens=max_new_tokens,
@@ -314,24 +229,14 @@ class Steerer:
         temperature: float = 0.7,
     ) -> Dict[str, Any]:
         """
-        Quantitative evaluation: run before/after comparison with metrics.
-
-        Returns dict with:
-        - comparisons: list of {prompt, baseline, steered, metrics}
-        - aggregate_metrics: averaged metrics
-        - overall_score: 0-100 composite score
-
-        Example
-        -------
-        >>> result = steerer.evaluate(model, tokenizer, ["Tell me about AI"])
-        >>> print(result["overall_score"])  # e.g. 78.5
+        Run before/after comparison with metrics (semantic shift, perplexity, vocabulary overlap).
+        Returns dict with comparisons, aggregate_metrics, overall_score, timing.
         """
         import math
         import time as _time
 
         t0 = _time.perf_counter()
 
-        # Try to load sentence transformer for semantic metrics
         embed_model = None
         try:
             from sentence_transformers import SentenceTransformer
@@ -351,14 +256,12 @@ class Steerer:
             steered = comparison["steered"]
             metrics: Dict[str, float] = {}
 
-            # Length metrics
             b_len = len(baseline.split())
             s_len = len(steered.split())
             metrics["baseline_length"] = b_len
             metrics["steered_length"] = s_len
             metrics["length_delta"] = s_len - b_len
 
-            # Vocabulary overlap (Jaccard)
             b_set = set(baseline.lower().split())
             s_set = set(steered.lower().split())
             union = b_set | s_set
@@ -366,7 +269,6 @@ class Steerer:
                 len(b_set & s_set) / max(len(union), 1) if union else 0.0
             )
 
-            # Semantic shift (cosine distance)
             if embed_model:
                 embs = embed_model.encode([baseline, steered], convert_to_tensor=True)
                 cos_sim = torch.nn.functional.cosine_similarity(
@@ -375,7 +277,6 @@ class Steerer:
                 metrics["semantic_similarity"] = round(cos_sim, 4)
                 metrics["semantic_shift"] = round(1.0 - cos_sim, 4)
 
-            # Perplexity delta
             for label, text in [("baseline", baseline), ("steered", steered)]:
                 try:
                     inp = tokenizer(
@@ -388,7 +289,8 @@ class Steerer:
                     metrics[f"{label}_perplexity"] = round(
                         math.exp(min(out.loss.item(), 20)), 2
                     )
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Perplexity computation failed for {label}: {e}")
                     metrics[f"{label}_perplexity"] = 0.0
 
             metrics["perplexity_delta"] = round(
@@ -405,7 +307,6 @@ class Steerer:
 
         elapsed = _time.perf_counter() - t0
 
-        # Aggregate
         agg: Dict[str, float] = {}
         if results:
             keys = results[0]["metrics"].keys()
@@ -413,7 +314,6 @@ class Steerer:
                 vals = [r["metrics"].get(k, 0) for r in results]
                 agg[f"avg_{k}"] = round(sum(vals) / len(vals), 4)
 
-        # Overall score
         shift = agg.get("avg_semantic_shift", 0)
         sem_score = min(shift / 0.3, 1.0) * 100
 
@@ -433,7 +333,7 @@ class Steerer:
             "total_time_ms": round(elapsed * 1000, 1),
         }
 
-    # ── Static convenience ───────────────────────────────────
+    # --- Full pipeline convenience ---
 
     @staticmethod
     def run(
@@ -445,30 +345,9 @@ class Steerer:
         quantize: bool = False,
         trust_remote_code: bool = False,
     ) -> str:
-        """
-        Full pipeline: load model + patch → generate → cleanup.
-
-        Parameters
-        ----------
-        patch_path : str
-            Path to the patch JSON file.
-        model_name : str
-            HuggingFace model identifier.
-        prompt : str
-            Input prompt.
-        max_new_tokens : int
-        device : str
-            'auto', 'cuda', 'cpu', 'mps'.
-        quantize : bool
-            Whether to load in 4-bit (requires CUDA + bitsandbytes).
-
-        Returns
-        -------
-        Generated text string.
-        """
+        """Full pipeline: load model + patch, generate, cleanup. Returns generated text."""
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        # Determine device
         if device == "auto":
             if torch.cuda.is_available():
                 dev = "cuda"
@@ -479,7 +358,6 @@ class Steerer:
         else:
             dev = device
 
-        # Load model
         load_kwargs: Dict[str, Any] = {
             "trust_remote_code": trust_remote_code,
             "low_cpu_mem_usage": True,
@@ -509,15 +387,14 @@ class Steerer:
             model = model.to(dev)
         model.eval()
 
-        # Apply patch and generate
         steerer = Steerer.from_patch(patch_path)
         return steerer.generate(model, tokenizer, prompt, max_new_tokens)
 
-    # ── Internal helpers ─────────────────────────────────────
+    # --- Internals ---
 
     @staticmethod
     def _get_layer_modules(model: Any) -> List[Any]:
-        """Extract transformer layer modules from model."""
+        """Extract transformer layer modules. Supports LLaMA, GPT-2, GPT-NeoX, OPT."""
         for attr_path in [
             "model.layers",
             "transformer.h",
@@ -538,7 +415,6 @@ class Steerer:
 
     @staticmethod
     def _get_hidden_dim(model: Any) -> Optional[int]:
-        """Try to detect the model's hidden dimension."""
         config = getattr(model, "config", None)
         if config:
             return (
@@ -547,8 +423,6 @@ class Steerer:
                 or getattr(config, "d_model", None)
             )
         return None
-
-    # ── Context manager ──────────────────────────────────────
 
     def __enter__(self):
         return self

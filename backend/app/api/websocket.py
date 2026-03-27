@@ -36,7 +36,6 @@ async def websocket_generate(ws: WebSocket):
     global _active_connections
     settings = get_settings()
 
-    # Enforce max connections
     if _active_connections >= settings.ws_max_connections:
         await ws.close(code=1013, reason="Server busy — max connections reached")
         return
@@ -49,7 +48,6 @@ async def websocket_generate(ws: WebSocket):
 
     try:
         while True:
-            # Wait for a message from the client
             raw = await ws.receive_text()
             data = json.loads(raw)
             msg_type = data.get("type", "")
@@ -163,7 +161,6 @@ async def _handle_generate(ws: WebSocket, data: dict, conn_id: int):
                 if _stop_flags.get(conn_id, False):
                     break
                 token_queue.put_nowait(token_data)
-            # Signal completion
             token_queue.put_nowait(None)
         except Exception as e:
             token_queue.put_nowait(e)
@@ -182,15 +179,12 @@ async def _handle_generate(ws: WebSocket, data: dict, conn_id: int):
                 logger.warning("WS generation timed out")
                 break
 
-            # Check for completion sentinel
             if token_data is None:
                 break
 
-            # Check for exception from generator thread
             if isinstance(token_data, Exception):
                 raise token_data
 
-            # Check for stop signal
             if _stop_flags.get(conn_id, False):
                 was_stopped = True
                 logger.info(f"Generation stopped after {tokens_generated} tokens")
@@ -209,7 +203,6 @@ async def _handle_generate(ws: WebSocket, data: dict, conn_id: int):
                 msg["diagnostics"] = diag
             await ws.send_json(msg)
 
-        # Wait for generator thread to finish
         await gen_task
 
         elapsed = time.perf_counter() - t0
